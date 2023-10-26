@@ -375,7 +375,7 @@ output_array_conj=np.zeros((200,200,501))
 
 count=0
     
-for theta_deg in np.linspace(60,60,1):
+for theta_deg in np.linspace(1,1,1):
     print(theta_deg)
     sample=LSMO()
     Incident=sample.Incident

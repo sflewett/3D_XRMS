@@ -6,20 +6,22 @@ Created on Mon Jun 12 14:45:28 2023
 """
 import numpy as np
 class XRMS_Sample():
-    def __init__(self):
-        self.Incident=np.array([[complex(1,0)],[complex(0,0)]])#polarization basis of the incident light (sigma, pi)
+    def __init__(self,circular):
+        if circular=="left":
+            self.Incident=np.array([[complex(1,0)],[-complex(0,1)]])#polarization basis of the incident light (sigma, pi)
+        if circular=="right":
+            self.Incident=np.array([[complex(1,0)],[complex(0,1)]])#polarization basis of the incident light (sigma, pi)
         self.size_x=2
         self.size_y=2
-        self.size_z=64
+        self.size_z=32
         self.sigma_roughness=0e-10#rugosidad para el cálculo de la reflexión especular utilizando la aproximación de Born
         self.dx=5e-9
         self.dy=5e-9
         self.dz=1e-9
-        z=np.linspace(0,5e-8,self.size_z)
-        self.z=z
-        self.f_Mag=complex(-2.32,-17.81)
+        z=np.linspace(0,20e-8,self.size_z)
+        z_random=np.random.normal(0, 6e-10, len(z))
+        self.z=z+z_random
         #-Datos para prueba-#
-        #self.mag_elements=["Gd"]
         self.f_Henke_Co=complex(-16.6574,16.7554)#From the Henke website
         self.f_Charge=complex(-18.45,18.91)#The original value is 68.91!!!   From the beamline calibration, including both the non-resonant and resonant effects
         self.f_Mag=complex(-2.32,-17.81)
@@ -42,7 +44,7 @@ class XRMS_Sample():
             if l%2==0:
                 self.M[:,:,:,l]=M_muster
                 self.na[:,:,l]=8900/0.0589*6.0222e23
-                self.f_Charge[:,:,l]=complex(-18.45,68.91)
+                self.f_Charge[:,:,l]=complex(-18.45,8.91)
                 self.f_Mag[:,:,l]=complex(-2.32,-17.81)
             else:
                 self.M[:,:,:,l]=M_muster-M_muster

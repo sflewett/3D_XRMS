@@ -58,7 +58,7 @@ class Stepanov_Specular():
         C=0#This needs to be set in the case that a quadratic term is present
        #And should be set in the initialization routine as a global parameter
         chi=np.zeros((3, 3),dtype=complex)
-       
+       #THIS PART NEEDS TO BE BETTER COMMENTED TO REFERENCE TO THE CORRECT PAPERS (STEPANOV, HANNON ETC)
         
         m1=np.array(M[0,...])
         m2=np.array(M[1,...])
@@ -81,6 +81,7 @@ class Stepanov_Specular():
         MM = np.array([[M[j,...]*M[i,...] for i in range(3)] for j in range(3)])
         chi = (chi_zero)*delta\
             -complex(0,1)*B*temp+C*MM
+        self.chi2=-complex(0,1)*B*temp+C*MM
         self.chi=chi
         self.chi_zero=chi_zero*ones
         
@@ -327,16 +328,28 @@ class Stepanov_Specular():
        #Ecuación 70 de Stepanov Sinha
         self.T_fields=np.array(T_fields)
         self.R_fields=np.array(R_fields)
+        self.specular_output=np.array(W_list_rt[-1])
+        R=self.specular_output@T0
+        self.I_output=np.abs(R[0])**2+np.abs(R[1])**2
+        #just changed the code to output the matrix of overall reflection coefficients
         
         Px2=self.Px[...,1:self.Px.shape[-1]]
         
         Pz2=self.Pz[...,1:self.Pz.shape[-1]]
         Basischange=self.Xrt-self.Xrt
         ones=np.ones(self.T_fields.shape[0],dtype=complex)
+        efields=np.zeros((Basischange.shape[0],4,3),dtype=complex)
+        for j in range (4):
+            efields[...,j,0]=Px2[j,...]
+            efields[...,j,1]=ones
+            efields[...,j,2]=Pz2[j,...]
+            
+        
         Basischange[...,0,0]=ones
         Basischange[...,0,1]=ones
         Basischange[...,1,0]=Px2[0,...]*np.sin(self.theta)+Pz2[0,...]*np.cos(self.theta)
         Basischange[...,1,1]=Px2[1,...]*np.sin(self.theta)+Pz2[1,...]*np.cos(self.theta)
+        #puts the polarization into the s-p basis
         Basischange2=Basischange
         Basischange2[...,1,0]=Px2[2,...]*np.sin(self.theta)+Pz2[2,...]*np.cos(self.theta)
         Basischange2[...,1,1]=Px2[3,...]*np.sin(self.theta)+Pz2[3,...]*np.cos(self.theta)
@@ -344,7 +357,16 @@ class Stepanov_Specular():
             if np.linalg.det(Basischange[l,:,:])==0:
                 Basischange[l,:,:]=np.identity(2,dtype=complex)
                 Basischange2[l,:,:]=np.identity(2,dtype=complex)
-        
+                for j in range (4):
+                    if j%2==0:
+                        efields[l,j,0]=0
+                        efields[l,j,1]=1
+                        efields[l,j,2]=0
+                    else:
+                        efields[l,j,0]=np.sin(self.theta)
+                        efields[l,j,1]=0
+                        efields[l,j,2]=np.cos(self.theta)
+        self.efields=efields                
         self.Basischange=np.array(Basischange)
         self.Basischange2=np.array(Basischange2)
         T_fields_linear=np.zeros(self.T_fields.shape,dtype=complex)
@@ -354,5 +376,5 @@ class Stepanov_Specular():
             R_fields_linear[l,:,:]=self.Basischange2[l,:,:]@self.R_fields[l,:]    
         self.T_fields_linear=np.array(T_fields_linear)
         self.R_fields_linear=np.array(R_fields_linear)
-            
+        
         
