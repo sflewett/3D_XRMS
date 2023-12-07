@@ -8,11 +8,12 @@ import numpy as np
 from pymatreader import read_mat
 class LSMO():
     def __init__(self):
-        self.Incident=np.array([[complex(1,0)],[complex(0,0)]])#polarization basis of the incident light (sigma, pi)
+        self.Incident=np.array([[complex(1,0)],[complex(0,1)]])#polarization basis of the incident light (sigma, pi)
         #self.lamda=1.95e-9#Mn edge
         self.unit_cell=3.88e-10#unit cell size
         self.dx=2e-9
         self.dz=5e-9
+        self.dz_mag=2.5e-9#thickness of the magnetic part of each layer
         files=["0my.mat","0mx.mat","0mz.mat"]#order is longitudinal, transverse, polar
         #files=["sky_my.mat","sky_mx.mat","sky_mz.mat"]#order is longitudinal, transverse, polar
         keys=["my01","mx01","mz01"]
@@ -42,6 +43,7 @@ class LSMO():
         self.na=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)
         self.f_Charge=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)
         self.f_Mag=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)
+        self.f_Mag2=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)
         #M_muster=np.array([[[-np.sqrt(0),-np.sqrt(0),-np.sqrt(1)] for j in range(self.size_x)] for k in range(self.size_y)])
         #M_muster=np.transpose(M_muster, (2,0,1)) WE DONT NEED THESE BECAUSE WE HAVE MM SIMULATIONS
         for l in range(self.size_z):
@@ -50,12 +52,14 @@ class LSMO():
                 self.M2[:,:,:,l]=self.M[:,:,:,l2]
                 self.na[:,:,l]=(self.na_O*2+self.na_Mn)/3
                 self.f_Charge[:,:,l]=(self.f_O*2+self.f_Mn)/3
-                self.f_Mag[:,:,l]=complex(-1.32,-2.81)
+                self.f_Mag[:,:,l]=complex(-0.32,-0.81)
+                self.f_Mag2[:,:,l]=complex(0,0)
             else:
                 self.M2[:,:,:,l]=np.zeros((3,self.size_x,self.size_y))
                 self.na[:,:,l]=(self.na_O+(self.na_La*0.666666+self.na_Sr*0.3333))/2
                 self.f_Charge[:,:,l]=(self.f_O+(self.f_La*0.666666+self.f_Sr*0.3333))/2
                 self.f_Mag[:,:,l]=0.
+                self.f_Mag2[:,:,l]=0.
         self.M=self.M2
     def matlabread(self,files,keys):
         M=[]
@@ -64,9 +68,9 @@ class LSMO():
             M.append(data[keys[j]])
         M=np.array(M)
         M2=np.zeros(M.shape,dtype=complex)
-        mx=M[0,...]
-        my=M[1,...]
-        mz=M[2,...]
+        mx=np.real(M[0,...])
+        my=np.real(M[1,...])
+        mz=np.real(M[2,...])
         mx2=mx
         my2=my
         mz2=mz
@@ -79,9 +83,9 @@ class LSMO():
                         m_trans=np.sqrt(1-0.99**2)
                         mz2[j,k,l]=m_trans*np.sin(angle)
                         mx2[j,k,l]=m_trans*np.cos(angle)
-        M2[0,...]=mx2
-        M2[1,...]=my2
-        M2[2,...]=mz2
+        M2[0,...]=mx
+        M2[1,...]=my
+        M2[2,...]=mz
         #this loop is to avoid a singlarity in the transverse MOKE case with the Stepanov
         #Sinha algorithm. In future, an exception needs to be incorporated into the main code
         #to avoid this unphysical workaround

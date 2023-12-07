@@ -11,7 +11,7 @@ import time
 
 class Stepanov_Specular():
     
-    def __init__(self, sample,theta,energy):
+    def __init__(self, sample,theta,energy,magnetic_diff='on'):
         
         c=3e8
         f=energy*1.6e-19/6.626e-34
@@ -24,8 +24,9 @@ class Stepanov_Specular():
         M=sample.M
         self.f_Charge=f_Charge[0,0,:]
         self.f_Mag=f_Mag[0,0,:]
+        self.f_Mag2=sample.f_Mag2[0,0,:]
         self.na=na[0,0,:]
-        self.M=sample.M[:,0,0,:]
+        self.M=(sample.M[:,20,20,:])
         #taking only one column for the specular calculation
         self.z=sample.z
         d=np.diff(self.z)
@@ -35,7 +36,7 @@ class Stepanov_Specular():
         self.d=d2
         self.Incident=sample.Incident#polarization basis of the incident light (sigma, pi)
         self.sigma_roughness=sample.sigma_roughness
-        
+        self.magnetic_diff=magnetic_diff
     def Chi_define(self):
         
         #M is set up as [m_vector,xpos,ypos,zpos]
@@ -47,15 +48,19 @@ class Stepanov_Specular():
         lamda=self.lamda
         f_charge=self.f_Charge
         f_Mag=self.f_Mag
+        f_Mag2=self.f_Mag2
         r0=self.r0
         na=self.na
         M=self.M
         multiplier=lamda**2*r0/np.pi
         chi_zero=np.zeros((len(self.z)),dtype=complex)
         for j in range(len(self.z)):
-            chi_zero[j]=na[j]*multiplier*f_charge[j]        
-        B=na*multiplier*f_Mag
-        C=0#This needs to be set in the case that a quadratic term is present
+            chi_zero[j]=na[j]*multiplier*f_charge[j]
+        if self.magnetic_diff=='on':
+            B=na*multiplier*f_Mag
+        if self.magnetic_diff=='off':
+            B=na*multiplier*0.0001
+        C=na*multiplier*f_Mag2#This needs to be set in the case that a quadratic term is present
        #And should be set in the initialization routine as a global parameter
         chi=np.zeros((3, 3),dtype=complex)
        #THIS PART NEEDS TO BE BETTER COMMENTED TO REFERENCE TO THE CORRECT PAPERS (STEPANOV, HANNON ETC)
@@ -137,10 +142,30 @@ class Stepanov_Specular():
             u_sorted=u_sorted/complex(0,1)
             temp=np.zeros((u_sorted.shape),dtype=complex)
             temp[0:2,:]=u_sorted[0:2,:]
-            temp[2,:]=u_sorted[3,:]
-            temp[3,:]=u_sorted[2,:]
+            temp[2,:]=u_sorted[2,:]
+            temp[3,:]=u_sorted[3,:]
             u_sorted=temp
-            return u_sorted
+            u=u_sorted
+            D=(chi[0,2]+u*nx)*(chi[2,0]+u*nx)-(1-u**2+chi[0,0])*(gamma**2+chi[2,2])
+            Px=(chi[0,1]*(gamma**2+chi[2,2])-chi[2,1]*(chi[0,2]+u*nx))/D
+            
+            u_i=u[0:2,:]
+            u_r=u[2:4,:]
+            
+            Px_i=np.imag(Px[0:2,:])
+            Px_r=np.imag(Px[2:4,:])
+            
+            sort_ind_i=np.argsort(Px_i,axis=0)
+            u_i_sorted=np.take_along_axis(u_i,sort_ind_i,axis=0)
+            
+            sort_ind_r=np.argsort(Px_r,axis=0)
+            u_r_sorted=np.take_along_axis(u_r,sort_ind_r,axis=0)
+            
+            u[0:2,:]=u_i_sorted
+            u[2,:]=u_r_sorted[1,:]
+            u[3,:]=u_r_sorted[0,:]
+            # the sorting is done such that there are no sudden phase jumps in Px and Pz
+            return u
         def Unonmag(chi_zero,nx,gamma):# non magnetic case
             u1=(chi_zero+gamma**2)**0.5
             u2=-u1
@@ -156,7 +181,7 @@ class Stepanov_Specular():
         U[:,mask2]=np.array(Unonmag(chi_zero,nx,gamma))[:,mask2]
         self.U=U
         #Ecuaciones 25-30 de Stepanov Sinha
-        
+    
     def get_A_S_matrix(self):#medium boundary matrix
          M=self.M
          chi=self.chi
@@ -372,8 +397,8 @@ class Stepanov_Specular():
         T_fields_linear=np.zeros(self.T_fields.shape,dtype=complex)
         R_fields_linear=np.zeros(self.R_fields.shape,dtype=complex)
         for l in range(Basischange.shape[0]):
-            T_fields_linear[l,:,:]=self.Basischange[l,:,:]@self.T_fields[l,:]
-            R_fields_linear[l,:,:]=self.Basischange2[l,:,:]@self.R_fields[l,:]    
+            T_fields_linear[l,:,:]=(self.Basischange[l,:,:])@self.T_fields[l,:]
+            R_fields_linear[l,:,:]=(self.Basischange2[l,:,:])@self.R_fields[l,:]    
         self.T_fields_linear=np.array(T_fields_linear)
         self.R_fields_linear=np.array(R_fields_linear)
         

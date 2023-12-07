@@ -5,13 +5,15 @@ Created on Mon Jun  5 09:40:32 2023
 @author: sflewett
 """
 import numpy as np
-#import cupy as np
+from scipy.interpolate import RegularGridInterpolator
 from numba import njit
 #from Sample_Class_test import XRMS_Sample
 from Stepanov_Specular import Stepanov_Specular
 from LSMO_sample_class import LSMO
 #import time
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from ffmpeg import FFmpeg, Progress
 #Set this all up so that intrinsically 1d input arrays are only input as 1d arrays
 #look up __all__ statement
 #read up on class inheritance
@@ -26,6 +28,7 @@ class XRMS_Simulate():
         self.theta=theta
         self.f_charge=sample.f_Charge
         self.f_Mag=sample.f_Mag
+        self.f_Mag2=sample.f_Mag2
         self.r0=2.82e-15
         self.na=sample.na
         self.M=sample.M
@@ -48,6 +51,7 @@ class XRMS_Simulate():
         lamda=self.lamda
         f_charge=self.f_charge
         f_Mag=self.f_Mag
+        f_Mag2=self.f_Mag2
         r0=self.r0
         na=self.na
         M=self.M
@@ -55,7 +59,7 @@ class XRMS_Simulate():
         multiplier=lamda**2*r0/np.pi
         chi_zero=na*multiplier*f_charge
         B=na*multiplier*f_Mag
-        C=0#This needs to be set in the case that a quadratic term is present
+        C=na*multiplier*f_Mag2#This needs to be set in the case that a quadratic term is present
        #And should be set in the initialization routine as a global parameter
         chi=np.zeros((3, 3),dtype=complex)
        
@@ -144,10 +148,30 @@ class XRMS_Simulate():
             u_sorted=u_sorted/complex(0,1)
             temp=np.zeros((u_sorted.shape),dtype=complex)
             temp[0:2,:,:,:]=u_sorted[0:2,:,:,:]
-            temp[2,:,:,:]=u_sorted[3,:,:,:]
-            temp[3,:,:,:]=u_sorted[2,:,:,:]
+            temp[2,:,:,:]=u_sorted[2,:,:,:]
+            temp[3,:,:,:]=u_sorted[3,:,:,:]
             u_sorted=temp
-            return u_sorted
+            u=u_sorted
+            D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
+            Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
+            # we calculate the eigenvector here as a means for sorting the order of the eigenvalues, and therefore the filling of the matrices
+            u_i=u[0:2,:,:,:]
+            u_r=u[2:4,:,:,:]
+            
+            Px_i=np.imag(Px[0:2,:,:,:])
+            Px_r=np.imag(Px[2:4,:,:,:])
+            
+            sort_ind_i=np.argsort(Px_i,axis=0)
+            u_i_sorted=np.take_along_axis(u_i,sort_ind_i,axis=0)
+            
+            sort_ind_r=np.argsort(Px_r,axis=0)
+            u_r_sorted=np.take_along_axis(u_r,sort_ind_r,axis=0)
+            
+            u[0:2,:,:,:]=u_i_sorted
+            u[2,:,:,:]=u_r_sorted[1,:,:,:]
+            u[3,:,:,:]=u_r_sorted[0,:,:,:]
+            # the sorting is done such that there are no sudden phase jumps in Px and Pz
+            return u
         def Unonmag(chi_zero,nx,gamma):# non magnetic case
             u1=(chi_zero+gamma**2)**0.5
             u2=-u1
@@ -192,6 +216,13 @@ class XRMS_Simulate():
              D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
              Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
              Pz=(chi[2,1,...]*(1-u**2+chi[0,0,...])-chi[0,1,...]*(chi[2,0,...]+u*nx))/D
+             
+             
+             #D_test=chi[1,0,...]*(gamma**2+chi[2,2,...])-chi[1,2,...]*(chi[2,0,...]+u*nx)
+             #Px_test=((gamma**2+chi[1,1,...]-u**2)*(gamma**2+chi[2,2,...])-chi[1,2,...]*chi[2,1,...])/D_test
+             
+             
+             
              v=u*Px-nx*Pz
              w=Px
              ones=np.ones(M_tot.shape,dtype=complex)
@@ -235,8 +266,8 @@ class XRMS_Simulate():
          M=self.M
          Px=self.Px
          Pz=self.Pz
-         AS1=A_S_Matrix[...,0:A_S_Matrix.shape[-1]-1]
-         AS2=A_S_Matrix[...,1:A_S_Matrix.shape[-1]]
+         AS1=A_S_Matrix[...,0:A_S_Matrix.shape[-1]-1]#upper
+         AS2=A_S_Matrix[...,1:A_S_Matrix.shape[-1]]#lower
          M2=np.zeros((M.shape[0],M.shape[1],M.shape[2],M.shape[3]+1),dtype=complex)
          M2[:,:,:,1:M2.shape[-1]]=M
          M=M2
@@ -258,18 +289,19 @@ class XRMS_Simulate():
          Xtt=X[...,0:2,0:2]
          Xrt=X[...,2:4,0:2]
          #@jit
-         def Mrt_nomag(Xtt,Xrt,mask): 
+         def Mrt_nomag_function(Xtt,Xrt,mask): 
              Mrt=np.matmul(Xrt,np.linalg.inv(Xtt))
              return Mrt
          #@njit
-         def Mrt_mag(Xtt,Xrt,M_tot,mask):
+         def Mrt_mag(Xtt,Xrt,M_tot):
              #M2=M_tot[...,0:M_tot.shape[-1]-1]
              Px2=Px[...,0:Px.shape[-1]-1]
-             Px2=Px2[:,mask]
+             #Px3=Px2[:,mask]
              Pz2=Pz[...,0:Pz.shape[-1]-1]
-             Pz2=Pz2[:,mask]
+             #Pz3=Pz2[:,mask]
              Basischange=Xrt-Xrt
-             ones=np.ones(M_tot.shape)
+             ones=np.ones(M_tot[:,:,0:-1].shape)
+             zeros=ones-ones
              Basischange[...,0,0]=ones
              Basischange[...,0,1]=ones
              Basischange[...,1,0]=Px2[0,...]*np.sin(theta)+Pz2[0,...]*np.cos(theta)
@@ -280,6 +312,19 @@ class XRMS_Simulate():
             
              Basischange=np.array(Basischange)
              Basischange2=np.array(Basischange2)
+             ones=np.ones(M_tot[:,:,0].shape)
+             zeros=ones-ones
+             for j in range(Basischange.shape[2]):
+                 if np.sum(M_tot[:,:,j])==0:
+                     Basischange[:,:,j,0,0]=ones
+                     Basischange[:,:,j,0,1]=zeros
+                     Basischange[:,:,j,1,0]=zeros
+                     Basischange[:,:,j,1,1]=ones
+                     Basischange2[:,:,j,0,0]=ones
+                     Basischange2[:,:,j,0,1]=zeros
+                     Basischange2[:,:,j,1,0]=zeros
+                     Basischange2[:,:,j,1,1]=ones
+             
              #@jit
              def Matrixalgebra(Basischange,Basischange2,Xrt,Xtt):
                  Eigen_reflection=np.matmul(Xrt,np.linalg.inv(Xtt))         
@@ -287,24 +332,28 @@ class XRMS_Simulate():
                  return processed_matrices
              Mrt=Matrixalgebra(Basischange,Basischange2,Xrt,Xtt)
              return Mrt
-         Mrt_matrix_dims=list(mask1.shape)+[2,2]
-         Mrt_matrix=np.zeros((Mrt_matrix_dims),dtype=complex)
-         M_tot2=M_tot[:,:,0:M_tot.shape[2]-1]
-         temp=Mrt_mag(Xtt[mask1,:,:],Xrt[mask1,:,:],M_tot2[mask1],mask1)
-         Mrt_mag=temp.reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2)
-         temp=Mrt_nomag(Xtt[mask2,:,:],Xrt[mask2,:,:],mask2)
-         Mrt_nomag=temp.reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2)
          
          
-         for l in range(M_tot2.shape[2]):
-             if M_tot2[0,0,l]!=0:
-                 Mrt_matrix[:,:,l,:,:]=Mrt_mag[:,:,l//2]
-             if M_tot2[0,0,l]==0:
-                 Mrt_matrix[:,:,l,:,:]=Mrt_nomag[:,:,l//2]
+         self.Mrt_matrix=Mrt_mag(Xtt,Xrt,M_tot)
+         # Mrt_mag=np.zeros((self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2),dtype=complex)
+         # Mrt_nomag=np.zeros((self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2),dtype=complex)
+         # Mrt_mag[:,:,:,0,0]=temp[:,0,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_mag[:,:,:,0,1]=temp[:,0,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_mag[:,:,:,1,0]=temp[:,1,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_mag[:,:,:,1,1]=temp[:,1,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         
+         # temp=Mrt_nomag_function(Xtt[mask2,:,:],Xrt[mask2,:,:],mask2)
+         # Mrt_nomag[:,:,:,0,0]=temp[:,0,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_nomag[:,:,:,0,1]=temp[:,0,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_nomag[:,:,:,1,0]=temp[:,1,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         # Mrt_nomag[:,:,:,1,1]=temp[:,1,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
+         
+         
+         
                  
          
             
-         self.Mrt_matrix=Mrt_matrix
+         # self.Mrt_matrix=Mrt_matrix
          return self.Mrt_matrix
      #this is the main routine called by the XRMS simulation loop.
      
@@ -317,6 +366,138 @@ class XRMS_Simulate():
         for l in range(att.shape[0]):
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
         self.R_array=R_array
+        
+    def get_M_Beamdirection(self):
+        #go from M defined in x, y and z to an M defined as longitudinal (along)
+        #the beam, sigma and pi
+        
+        M=self.M
+        theta=self.theta
+        
+        M_long_in=M[0,:,:,:]*np.cos(theta)+M[2,:,:,:]*np.sin(theta)
+        M_long_out=M[0,:,:,:]*np.cos(theta)-M[2,:,:,:]*np.sin(theta)
+        M_pi_in=M[0,:,:,:]*np.sin(theta)-M[2,:,:,:]*np.cos(theta)
+        M_pi_out=-M[0,:,:,:]*np.sin(theta)-M[2,:,:,:]*np.cos(theta)
+        M_trans=M[1,:,:,:]
+        return M_long_in, M_long_out, M_pi_in,M_pi_out,M_trans
+    def get_U_mag_absorption(self):
+        #for the magnetic absorption correction in the 3D case
+        #we use a simplified formula to calculate u as defined in equation 6
+        #of Stepanov Sinha
+        lamda=self.lamda
+        f_charge=self.f_charge
+        f_Mag=self.f_Mag
+        f_Mag2=self.f_Mag2
+        r0=self.r0
+        na=self.na
+               
+        multiplier=lamda**2*r0/np.pi
+        chi_zero=na*multiplier*f_charge
+        u=(chi_zero+np.sin(self.theta)**2)**0.5
+        chi_zero=na*multiplier*(f_charge-f_Mag)
+        umag=(chi_zero+np.sin(self.theta)**2)**0.5
+        chi_zero=na*multiplier*(f_charge-f_Mag2)  
+        umag2=(chi_zero+np.sin(self.theta)**2)**0.5        
+        return u,umag,umag2
+      
+        
+    def get_Faraday_Parallel(self,specular):
+        #this function calculates the differential absorption due to sections of the sample
+        #magnetized parallel to the incident beam, and is especially important when 
+        #there is an applied field applied.
+        
+        #For best results, it is advised to use periodic boundary conditions for the micromagnetic 
+        #simulations as an input, because the interpolation routine exceeds the boundary of the 
+        
+        #this code calculates to first order the pertubation in the absorption caused by the magnetization dependent part 
+        #of the atomic scattering factor
+        
+        M_long_in, M_long_out, M_pi_in,M_pi_out,M_trans=self.get_M_Beamdirection()
+        theta=self.theta
+        def get_abs_adj(XMCD_XMLD,M,in_out):
+            nx=self.size_x
+            ny=self.size_y
+            nz=self.sample.size_z
+            
+            dx=self.sample.dx
+            dz=self.sample.dz
+            
+            dz_mag=self.sample.dz_mag
+            
+            ratio=dx/dz
+            x=np.linspace(0,nx-1,nx)
+            y=np.linspace(0,ny-1,ny)
+            z=np.linspace(0,nz-1,nz)
+            interp_plus=np.zeros((len(x),len(y),len(z)),dtype=complex)
+            interp_minus=np.zeros((len(x),len(y),len(z)),dtype=complex)
+            for k in range(len(z)):
+                x_shifted_plus=(x+z[k]*ratio/np.tan(theta))%nx
+                x_shifted_minus=(x-z[k]*ratio/np.tan(theta))%nx
+                pts_plus=[]
+                pts_minus=[]
+                for i in range (len(x)):
+                    for j in range (len(y)):
+                        point_plus=[x_shifted_plus[i],y[j]]
+                        point_minus=[x_shifted_minus[i],y[j]]
+                        pts_plus.append(point_plus)
+                        pts_minus.append(point_minus)
+                if XMCD_XMLD=="XMCD":
+                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=0)
+                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=0) 
+                if XMCD_XMLD=="XMLD":
+                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=0)
+                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=0) 
+                a=np.reshape(np.array(temp_plus(pts_plus)),(len(x),len(y)))
+                b=np.reshape(np.array(temp_minus(pts_minus)),(len(x),len(y)))
+                interp_plus[:,:,k]=a
+                interp_minus[:,:,k]=b
+                
+            partial_sum_plus=interp_plus-interp_plus
+            partial_sum_minus=interp_plus-interp_plus
+            
+            
+            for j in range(interp_plus.shape[2]):
+                if j==0:
+                    partial_sum_plus[:,:,j]=interp_plus[:,:,j]
+                    partial_sum_minus[:,:,j]=interp_minus[:,:,j]
+                else:
+                    partial_sum_plus[:,:,j]=partial_sum_plus[:,:,j-1]+interp_plus[:,:,j]
+                    partial_sum_minus[:,:,j]=partial_sum_minus[:,:,j-1]+interp_minus[:,:,j]
+                    
+            for k in range(len(z)):
+                    
+                temp_plus = RegularGridInterpolator((x, y), partial_sum_minus[:,:,k],bounds_error=False, fill_value=np.sum(partial_sum_minus[0,:,k])/M.shape[1])
+                temp_minus = RegularGridInterpolator((x, y), partial_sum_plus[:,:,k],bounds_error=False, fill_value=np.sum(partial_sum_minus[0,:,k])/M.shape[1]) 
+                a=np.reshape(np.array(temp_plus(pts_plus)),(len(x),len(y)))
+                b=np.reshape(np.array(temp_minus(pts_minus)),(len(x),len(y)))
+                partial_sum_plus[:,:,k]=b
+                partial_sum_minus[:,:,k]=a
+            
+            
+            u,umag,umag2=self.get_U_mag_absorption()   
+            x=np.exp(-np.imag(u)*2*np.pi/self.lamda*dz_mag)
+            dx=np.exp(-np.imag(umag)*2*np.pi/self.lamda*dz_mag)-x
+            dx2=np.exp(-np.imag(umag2)*2*np.pi/self.lamda*dz_mag)-x
+            if XMCD_XMLD=="XMCD":
+                adj_abs_plus=partial_sum_plus/x*dx+1
+                adj_abs_minus=partial_sum_minus/x*dx+1 
+            if XMCD_XMLD=="XMLD":
+                adj_abs_plus=partial_sum_plus/x*dx2+1
+                adj_abs_minus=partial_sum_minus/x*dx2+1 
+            if in_out=="in":
+                return adj_abs_plus
+            if in_out=="out":
+                return adj_abs_minus
+        adj_abs_plus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_in,in_out="in")
+        adj_abs_minus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_out,in_out="out")
+        adj_abs_plus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_in,in_out="in")
+        adj_abs_minus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_out,in_out="out")
+        adj_abs_plus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="in")
+        adj_abs_minus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="out")
+        #absorption factor        
+        return adj_abs_plus_XMCD,adj_abs_minus_XMCD,adj_abs_plus_XMLD_pi,adj_abs_minus_XMLD_pi,adj_abs_plus_XMLD_trans,adj_abs_minus_XMLD_trans
+        
+        
         
     def R_array_2_Diffraction(self):
         
@@ -361,27 +542,33 @@ class XRMS_Simulate():
         return self.intensity
     def display_intensity(self,Incident):
         diffraction=self.export_intensity(Incident)
-        fig, axs = plt.subplots(1,2)
-        fig.suptitle('XRMS output')
+        
         diffraction[:,100]=0
-        axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0))        
-        axs[1].imshow(np.real(diffraction[50:150,50:150]))
-        return diffraction
+        #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
+        
+        im=(np.real(diffraction[90:110,90:110]))
+        
+        return im
     
 
 
 output_array=np.zeros((200,200,501))
 output_array_conj=np.zeros((200,200,501))
+fig,ax = plt.subplots(1,1)
 
+#fig.suptitle('XRMS output')
+plt.ylabel("pixel_long")
+plt.xlabel("pixel_trans")
 count=0
-    
-for theta_deg in np.linspace(1,1,1):
+ims = []  
+angles=np.linspace(10,40,61)
+for theta_deg in angles:
     print(theta_deg)
     sample=LSMO()
     Incident=sample.Incident
-    Incident2=np.array([[complex(0,0)],[complex(1,0)]])
+    Incident2=np.array([[complex(1,0)],[complex(0,-1)]])
     theta=theta_deg*np.pi/180
-    specular=Stepanov_Specular(sample,theta,energy=640)
+    specular=Stepanov_Specular(sample,theta,energy=640,magnetic_diff='off')
     specular.Chi_define()
     specular.get_A_S_matrix()
     specular.XM_define_Big()
@@ -392,18 +579,36 @@ for theta_deg in np.linspace(1,1,1):
     XRMS.get_A_S_matrix()
     output=XRMS.XM_define_Small()
     XRMS.get_R()
-    
+    XRMS.get_Faraday_Parallel(specular)
     sample.interpolate_nearest_neighbour(XRMS.R_array)
     XRMS.R_array_2_Diffraction()
-    #plt.figure
-    #XRMS.display_intensity(np.array(Incident,dtype=complex))
+    #fig=plt.figure()
+    
+        
+    #ax.set_title(f'XRMS output_{theta_deg}')
+    #ims.append([im])
+
+    
     output_array[:,:,count]=XRMS.export_intensity(Incident)
     output_array_conj[:,:,count]=XRMS.export_intensity((Incident2))
     count=count+1
-output_array_conj2=np.resize(output_array_conj,(40000,501))
-output_array2=np.resize(output_array,(40000,501))
-np.savetxt('sigma'+'deep_LSMO'+'.csv',output_array2, delimiter=',')
-np.savetxt('pi'+'deep_LSMO'+'.csv',output_array_conj2, delimiter=',')
+def update(j):
+    theta_deg=angles
+    diffraction=output_array[:,:,j]-output_array_conj[:,:,j]
+    diffraction[:,100]=0
+    #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
+    
+    im=(np.real(diffraction[90:110,90:110]))
+    plt.title(f'XRMS output_{theta_deg[j]}')
+    plt.imshow(im)
+ani = animation.FuncAnimation(fig,update,frames=len(angles), interval=200, blit=False,repeat_delay=1000)
+ani.save("XRMS.gif")
+#Bloch_correction=XRMS.get_Faraday_Parallel(specular)
+#output_array_conj2=np.resize(output_array_conj,(40000,501))
+
+#output_array2=np.resize(output_array,(40000,501))
+#np.savetxt('sigma'+'deep_LSMO'+'.csv',output_array2, delimiter=',')
+#np.savetxt('pi'+'deep_LSMO'+'.csv',output_array_conj2, delimiter=',')
     
 
 
