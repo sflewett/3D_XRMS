@@ -91,7 +91,7 @@ class XRMS_Simulate():
         
         
     def get_U(self):
-        
+        #Equations 25 to 30 of Stepanov-Sinha
         M=self.M
         chi=self.chi
         chi_zero=self.chi_zero
@@ -111,6 +111,7 @@ class XRMS_Simulate():
         #import quartic_solver_analytic
         
         @njit
+        #Without njit, this is by far the slowest part of the entire code
         def Uloop(M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays):
             u1=output_arrays[0]
             u2=output_arrays[1]
@@ -142,7 +143,7 @@ class XRMS_Simulate():
             output_arrays=np.array([u1,u2,u3,u4],dtype=np.complex128)                    
             u1,u2,u3,u4=Uloop(M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays)
             u=np.array([u1,u2,u3,u4],dtype=complex)
-            
+            #here we literally copy from equations 25-30 of Stepanov Sinha
             imag=u*complex(0,1)
             u_sorted=np.sort(imag,axis=0)
             u_sorted=u_sorted/complex(0,1)
@@ -152,9 +153,14 @@ class XRMS_Simulate():
             temp[3,:,:,:]=u_sorted[3,:,:,:]
             u_sorted=temp
             u=u_sorted
+            
+            #first filtering the output of the np.roots solver in terms of descending order of the imaginary part
+            
             D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
             Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
+            #equations 33 and 35 of Stepanov-Sinha
             # we calculate the eigenvector here as a means for sorting the order of the eigenvalues, and therefore the filling of the matrices
+            #not including this step produces sudden shifts in the order of the eigenwaves predicted by the quartic solver
             u_i=u[0:2,:,:,:]
             u_r=u[2:4,:,:,:]
             
@@ -173,6 +179,7 @@ class XRMS_Simulate():
             # the sorting is done such that there are no sudden phase jumps in Px and Pz
             return u
         def Unonmag(chi_zero,nx,gamma):# non magnetic case
+            #Equation 6 of Stepanov Sinha
             u1=(chi_zero+gamma**2)**0.5
             u2=-u1
             u3=u2-u2#setting these to zero
@@ -188,6 +195,7 @@ class XRMS_Simulate():
         #Ecuaciones 25-30 de Stepanov Sinha
     
     def get_A_S_matrix(self):#medium boundary matrix
+        #Equation 15 of Stepanov Sinha in the non-magnetic case, and equation 36 in the magnetic case
          M=self.M
          chi=self.chi
          chi_zero=self.chi_zero
@@ -210,21 +218,20 @@ class XRMS_Simulate():
              P_dims=[4]+list(M_tot.shape) 
              Px=np.zeros((P_dims))
              Pz=Px
+             #for the non-magnetic case, the eigenvectors, whose x and z components are labelled Px and Pz
+             #do not have a meaning expressed in terms of Py, as is the case for the magnetic case
              return np.array(Matrix,dtype=complex),Px,Pz
          def Small_matrix_mag(chi,chi_zero,theta,nx,gamma):
              u=self.U
              D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
              Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
              Pz=(chi[2,1,...]*(1-u**2+chi[0,0,...])-chi[0,1,...]*(chi[2,0,...]+u*nx))/D
+             #equations 33, 35 and 35 of Stepanov Sinha
              
-             
-             #D_test=chi[1,0,...]*(gamma**2+chi[2,2,...])-chi[1,2,...]*(chi[2,0,...]+u*nx)
-             #Px_test=((gamma**2+chi[1,1,...]-u**2)*(gamma**2+chi[2,2,...])-chi[1,2,...]*chi[2,1,...])/D_test
-             
-             
-             
+                          
              v=u*Px-nx*Pz
              w=Px
+             #equations 37 and 38 of Stepanov Sinha
              ones=np.ones(M_tot.shape,dtype=complex)
              Matrix=[[ones,ones,ones,ones],\
                      [v[0,...],v[1,...],v[2,...],v[3,...]],\
@@ -234,11 +241,14 @@ class XRMS_Simulate():
              return np.array(Matrix),Px,Pz
          
          A_S_matrix_dims=[4,4]+list(M_tot.shape) 
+         #the naming comes from the fact that some resources name this medium boundary matrix A, whereas Stepanov Sinha uses S
          A_S_matrix=np.zeros((A_S_matrix_dims),dtype=complex)
          P_dims=[4]+list(M_tot.shape) 
          self.Px=np.zeros((P_dims),dtype=complex)
          self.Pz=np.zeros((P_dims),dtype=complex)
+         #initializing multidimenisonal arrays
          self.get_U()
+         
          temp1,temp2,temp3=Small_matrix_mag(chi,chi_zero,theta,nx,gamma)
          A_S_matrix[:,:,mask1],self.Px[:,mask1],self.Pz[:,mask1]=temp1[:,:,mask1],temp2[:,mask1],temp3[:,mask1]
          temp1,temp2,temp3=Small_matrix_nomag(chi,chi_zero,theta)
@@ -250,6 +260,7 @@ class XRMS_Simulate():
                 [zeros,ones,zeros,ones],\
                 [ones*gamma,zeros,-ones*gamma,zeros],\
                 [zeros,ones*gamma,zeros,-ones*gamma]])
+             #this is the vacuum matrix from the LHS of equation 15
          A_S_matrix2[...,1:A_S_matrix.shape[-1]+1]=A_S_matrix
          A_S_matrix2[...,0]=Matrix
          self.AS_Matrix=A_S_matrix2
@@ -261,6 +272,8 @@ class XRMS_Simulate():
          self.Pz=Pz2
      
     def XM_define_Small(self): 
+        #this method has the purpose of moving through from the medium boundary matrices to the single interface reflection coefficients, using the formalism of
+        #the Stepanov-Sinha paper. 
          theta=self.theta
          A_S_Matrix=self.AS_Matrix
          M=self.M
@@ -268,6 +281,8 @@ class XRMS_Simulate():
          Pz=self.Pz
          AS1=A_S_Matrix[...,0:A_S_Matrix.shape[-1]-1]#upper
          AS2=A_S_Matrix[...,1:A_S_Matrix.shape[-1]]#lower
+         #reflection coefficients are defined by multiplying two medium boundary matrices across a boundary
+        
          M2=np.zeros((M.shape[0],M.shape[1],M.shape[2],M.shape[3]+1),dtype=complex)
          M2[:,:,:,1:M2.shape[-1]]=M
          M=M2
@@ -286,19 +301,22 @@ class XRMS_Simulate():
          AS2=np.transpose(AS2, permutation)
         
          X=np.matmul(np.linalg.inv(AS1),AS2)
+         #Equation taken from the line of text below Equation 58 in Stepanov Sinha
          Xtt=X[...,0:2,0:2]
          Xrt=X[...,2:4,0:2]
+         #Equation 60 of Stepanov Sinha
          #@jit
          def Mrt_nomag_function(Xtt,Xrt,mask): 
              Mrt=np.matmul(Xrt,np.linalg.inv(Xtt))
              return Mrt
+         #simply applying equation 62 of Stepanov Sinha
          #@njit
          def Mrt_mag(Xtt,Xrt,M_tot):
-             #M2=M_tot[...,0:M_tot.shape[-1]-1]
+             
              Px2=Px[...,0:Px.shape[-1]-1]
-             #Px3=Px2[:,mask]
+            
              Pz2=Pz[...,0:Pz.shape[-1]-1]
-             #Pz3=Pz2[:,mask]
+             
              Basischange=Xrt-Xrt
              ones=np.ones(M_tot[:,:,0:-1].shape)
              zeros=ones-ones
@@ -306,10 +324,12 @@ class XRMS_Simulate():
              Basischange[...,0,1]=ones
              Basischange[...,1,0]=Px2[0,...]*np.sin(theta)+Pz2[0,...]*np.cos(theta)
              Basischange[...,1,1]=Px2[1,...]*np.sin(theta)+Pz2[1,...]*np.cos(theta)
+             #to change from the basis of the incoming light to the eigenbasis of the layer
              Basischange2=Basischange
              Basischange2[...,1,0]=Px2[2,...]*np.sin(theta)+Pz2[2,...]*np.cos(theta)
              Basischange2[...,1,1]=Px2[3,...]*np.sin(theta)+Pz2[3,...]*np.cos(theta)
-            
+             #to change from the eigenbasis of the layer to the eigenbasis of the outgoing light
+             #these matrices are defined in equation 8 of the new paper
              Basischange=np.array(Basischange)
              Basischange2=np.array(Basischange2)
              ones=np.ones(M_tot[:,:,0].shape)
@@ -324,44 +344,30 @@ class XRMS_Simulate():
                      Basischange2[:,:,j,0,1]=zeros
                      Basischange2[:,:,j,1,0]=zeros
                      Basischange2[:,:,j,1,1]=ones
-             
+             #for the non-magnetic layers, the basischange matrix is simply the identity matrix
              #@jit
              def Matrixalgebra(Basischange,Basischange2,Xrt,Xtt):
                  Eigen_reflection=np.matmul(Xrt,np.linalg.inv(Xtt))         
                  processed_matrices=np.matmul(np.matmul(Basischange2,Eigen_reflection),np.linalg.inv(Basischange))
                  return processed_matrices
              Mrt=Matrixalgebra(Basischange,Basischange2,Xrt,Xtt)
+             #simply applying equation 62 of Stepanov Sinha, and applying the basischange
              return Mrt
          
          
          self.Mrt_matrix=Mrt_mag(Xtt,Xrt,M_tot)
-         # Mrt_mag=np.zeros((self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2),dtype=complex)
-         # Mrt_nomag=np.zeros((self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),2,2),dtype=complex)
-         # Mrt_mag[:,:,:,0,0]=temp[:,0,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_mag[:,:,:,0,1]=temp[:,0,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_mag[:,:,:,1,0]=temp[:,1,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_mag[:,:,:,1,1]=temp[:,1,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
          
-         # temp=Mrt_nomag_function(Xtt[mask2,:,:],Xrt[mask2,:,:],mask2)
-         # Mrt_nomag[:,:,:,0,0]=temp[:,0,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_nomag[:,:,:,0,1]=temp[:,0,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_nomag[:,:,:,1,0]=temp[:,1,0].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         # Mrt_nomag[:,:,:,1,1]=temp[:,1,1].reshape(self.size_x,self.size_y,int(temp.shape[0]/(self.size_x*self.size_y)),order="C")
-         
-         
-         
-                 
-         
-            
-         # self.Mrt_matrix=Mrt_matrix
          return self.Mrt_matrix
      #this is the main routine called by the XRMS simulation loop.
      
     def get_R(self):
         att2=self.T_fields_linear
-        att3=att2*np.conj(att2)
-        att=att3.sum(axis=1)
         
+        att3=att2*np.conj(att2)
+        
+        att=att3.sum(axis=1)
+        #The reflection coefficients are to be scaled by the square of the relative field strength within the sample. We
+        #scale by the square to include attenuation of both incident and reflected beams
         R_array=np.zeros(self.Mrt_matrix.shape,dtype=complex)
         for l in range(att.shape[0]):
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
@@ -371,6 +377,7 @@ class XRMS_Simulate():
         #go from M defined in x, y and z to an M defined as longitudinal (along)
         #the beam, sigma and pi
         
+        #This routine is needed for the inclusion of the differential absorption due to magnetization along the x direction (XMCD) 
         M=self.M
         theta=self.theta
         
@@ -397,7 +404,8 @@ class XRMS_Simulate():
         chi_zero=na*multiplier*(f_charge-f_Mag)
         umag=(chi_zero+np.sin(self.theta)**2)**0.5
         chi_zero=na*multiplier*(f_charge-f_Mag2)  
-        umag2=(chi_zero+np.sin(self.theta)**2)**0.5        
+        umag2=(chi_zero+np.sin(self.theta)**2)**0.5 
+        
         return u,umag,umag2
       
         
@@ -415,6 +423,7 @@ class XRMS_Simulate():
         M_long_in, M_long_out, M_pi_in,M_pi_out,M_trans=self.get_M_Beamdirection()
         theta=self.theta
         def get_abs_adj(XMCD_XMLD,M,in_out):
+            #to calculate the adjusted absorption
             nx=self.size_x
             ny=self.size_y
             nz=self.sample.size_z
@@ -433,6 +442,8 @@ class XRMS_Simulate():
             for k in range(len(z)):
                 x_shifted_plus=(x+z[k]*ratio/np.tan(theta))%nx
                 x_shifted_minus=(x-z[k]*ratio/np.tan(theta))%nx
+                #we can caluculate the projected magnetization through the sample by shifting each plane in the multilayer sample along the longitudinal
+                #direction
                 pts_plus=[]
                 pts_minus=[]
                 for i in range (len(x)):
@@ -463,7 +474,8 @@ class XRMS_Simulate():
                 else:
                     partial_sum_plus[:,:,j]=partial_sum_plus[:,:,j-1]+interp_plus[:,:,j]
                     partial_sum_minus[:,:,j]=partial_sum_minus[:,:,j-1]+interp_minus[:,:,j]
-                    
+                #the plus and minus are for the incoming and outgoing beams respectively. We need partial sums as well
+                #to include the total contributions up to each layer where reflection is to be calculated
             for k in range(len(z)):
                     
                 temp_plus = RegularGridInterpolator((x, y), partial_sum_minus[:,:,k],bounds_error=False, fill_value=np.sum(partial_sum_minus[0,:,k])/M.shape[1])
@@ -472,12 +484,15 @@ class XRMS_Simulate():
                 b=np.reshape(np.array(temp_minus(pts_minus)),(len(x),len(y)))
                 partial_sum_plus[:,:,k]=b
                 partial_sum_minus[:,:,k]=a
-            
+            #here we unwrap the partial sums so that they correspond to the correct spatial position of the reflections
             
             u,umag,umag2=self.get_U_mag_absorption()   
             x=np.exp(-np.imag(u)*2*np.pi/self.lamda*dz_mag)
             dx=np.exp(-np.imag(umag)*2*np.pi/self.lamda*dz_mag)-x
             dx2=np.exp(-np.imag(umag2)*2*np.pi/self.lamda*dz_mag)-x
+            
+            #calculating relative differential absorptions to first order
+            
             if XMCD_XMLD=="XMCD":
                 adj_abs_plus=partial_sum_plus/x*dx+1
                 adj_abs_minus=partial_sum_minus/x*dx+1 
@@ -499,18 +514,20 @@ class XRMS_Simulate():
         
         
         
-    def R_array_2_Diffraction(self):
-        
-        R=self.sample.R_interp
-        z=self.sample.z_interp
-        
-        
+    def R_array_2_Diffraction(self,R,z, z_grid_size):
+        #this method simulates the roughness free reflective diffraction pattern by calculating a 3D Fourier Transform, evaluated only at points on the
+        #Ewald sphere
+               
         Fourier2d=np.fft.fftshift(np.fft.fftn(R, axes=(0, 1)),axes=(0,1)) 
         
         nn=R.shape[1]
-        delta_z_Fourier=sample.unit_cell/2
+        delta_z_Fourier=z_grid_size#sample.unit_cell/2
+        #this needs to be changed to either the unit cell, or the multilayer dz value
         n_average=self.n_average
-        z_index=(np.array(z-z[np.int64(np.round(len(z)/2))])/delta_z_Fourier*np.real(n_average))        
+       # z_index=np.round(np.array(z)/delta_z_Fourier*np.real(n_average))
+        z_index=(np.array(z-z[np.int64(np.round(len(z)/2))])/delta_z_Fourier*np.real(n_average))
+        #the index of real space z value of the interpolated sample. For calculating this, we use the 
+        #average refractive index of the sample
         delta_qx=4*np.pi/nn/self.sample.dx
         delta_qz=4*np.pi/max(z_index)/delta_z_Fourier
         pix_z=np.linspace(-nn/2,nn/2-1,nn)
@@ -532,6 +549,7 @@ class XRMS_Simulate():
                    #this line is to evaluate the 3D Fourier transform only over the Ewald Sphere
         self.XRMS_Pure=[[np.sum(DFT*Fourier2d[:,:,:,0,0],2),np.sum(DFT*Fourier2d[:,:,:,0,1],2)],\
                         [np.sum(DFT*Fourier2d[:,:,:,1,0],2),np.sum(DFT*Fourier2d[:,:,:,1,1],2)]]
+            #the name "Pure" is chosen because roughness is excluded at this stage
         self.XRMS=self.XRMS_Pure
         
     def export_intensity(self,Incident):
@@ -561,7 +579,7 @@ plt.ylabel("pixel_long")
 plt.xlabel("pixel_trans")
 count=0
 ims = []  
-angles=np.linspace(10,40,61)
+angles=np.linspace(10,10,1)
 for theta_deg in angles:
     print(theta_deg)
     sample=LSMO()
@@ -581,8 +599,9 @@ for theta_deg in angles:
     XRMS.get_R()
     XRMS.get_Faraday_Parallel(specular)
     sample.interpolate_nearest_neighbour(XRMS.R_array)
-    XRMS.R_array_2_Diffraction()
-    #fig=plt.figure()
+    XRMS.R_array_2_Diffraction(R=sample.R_interp,z=sample.z_interp, z_grid_size=sample.unit_cell/2)
+    #here we need to input the array of reflection coefficients R, the original z coordinates z, and 
+    #the regular z mesh size to interpolate into z_grid_size.
     
         
     #ax.set_title(f'XRMS output_{theta_deg}')

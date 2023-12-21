@@ -93,7 +93,7 @@ class Stepanov_Specular():
         
         
     def get_U(self):
-        
+        #Equations 25 to 30 of Stepanov-Sinha
         M=self.M
         chi=self.chi
         chi_zero=self.chi_zero
@@ -136,7 +136,7 @@ class Stepanov_Specular():
             output_arrays=np.array([u1,u2,u3,u4],dtype=np.complex128)                    
             u1,u2,u3,u4=Uloop(Q1,Q2,Q3,Q4,Q5,output_arrays)
             u=np.array([u1,u2,u3,u4],dtype=complex)
-            
+            #here we literally copy from equations 25-30 of Stepanov Sinha
             imag=u*complex(0,1)
             u_sorted=np.sort(imag,axis=0)
             u_sorted=u_sorted/complex(0,1)
@@ -148,7 +148,9 @@ class Stepanov_Specular():
             u=u_sorted
             D=(chi[0,2]+u*nx)*(chi[2,0]+u*nx)-(1-u**2+chi[0,0])*(gamma**2+chi[2,2])
             Px=(chi[0,1]*(gamma**2+chi[2,2])-chi[2,1]*(chi[0,2]+u*nx))/D
-            
+            #equations 33 and 35 of Stepanov-Sinha
+            # we calculate the eigenvector here as a means for sorting the order of the eigenvalues, and therefore the filling of the matrices
+            #not including this step produces sudden shifts in the order of the eigenwaves predicted by the quartic solver
             u_i=u[0:2,:]
             u_r=u[2:4,:]
             
@@ -167,6 +169,7 @@ class Stepanov_Specular():
             # the sorting is done such that there are no sudden phase jumps in Px and Pz
             return u
         def Unonmag(chi_zero,nx,gamma):# non magnetic case
+            #Equation 6 of Stepanov Sinha
             u1=(chi_zero+gamma**2)**0.5
             u2=-u1
             u3=u2-u2#setting these to zero
@@ -183,6 +186,7 @@ class Stepanov_Specular():
         #Ecuaciones 25-30 de Stepanov Sinha
     
     def get_A_S_matrix(self):#medium boundary matrix
+        #Equation 15 of Stepanov Sinha in the non-magnetic case, and equation 36 in the magnetic case
          M=self.M
          chi=self.chi
          chi_zero=self.chi_zero
@@ -210,6 +214,8 @@ class Stepanov_Specular():
              P_dims=[4]+list(M_tot.shape) 
              Px=np.zeros((P_dims))
              Pz=Px
+             #for the non-magnetic case, the eigenvectors, whose x and z components are labelled Px and Pz
+             #do not have a meaning expressed in terms of Py, as is the case for the magnetic case
              return np.array(Matrix,dtype=complex),np.array(F,dtype=complex),Px,Pz
          def Small_matrix_mag(chi,chi_zero,theta,nx,gamma):
              self.get_U()
@@ -217,8 +223,10 @@ class Stepanov_Specular():
              D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
              Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
              Pz=(chi[2,1,...]*(1-u**2+chi[0,0,...])-chi[0,1,...]*(chi[2,0,...]+u*nx))/D
+             #equations 33, 35 and 35 of Stepanov Sinha
              v=u*Px-nx*Pz
              w=Px
+             #equations 37 and 38 of Stepanov Sinha
              ones=np.ones(M_tot.shape,dtype=complex)
              zeros=u[0,...]-u[0,...]
              Matrix=[[ones,ones,ones,ones],\
@@ -233,11 +241,13 @@ class Stepanov_Specular():
              return np.array(Matrix,dtype=complex),np.array(F,dtype=complex),Px,Pz
          
          A_S_matrix_dims=[4,4]+list(M_tot.shape) 
+         #the naming comes from the fact that some resources name this medium boundary matrix A, whereas Stepanov Sinha uses S
          A_S_matrix=np.zeros((A_S_matrix_dims),dtype=complex)
          F_matrix=np.zeros((A_S_matrix_dims),dtype=complex)
          P_dims=[4]+list(M_tot.shape) 
          self.Px=np.zeros((P_dims),dtype=complex)
          self.Pz=np.zeros((P_dims),dtype=complex)
+         #initializing arrays
          temp1,temp2,temp3,temp4=Small_matrix_mag(chi,chi_zero,theta,nx,gamma)
          A_S_matrix[:,:,mask1],F_matrix[:,:,mask1],self.Px[:,mask1],self.Pz[:,mask1]=temp1[:,:,mask1],temp2[:,:,mask1],temp3[:,mask1],temp4[:,mask1]
          temp1,temp2,temp3,temp4=Small_matrix_nomag(chi,chi_zero,theta)
@@ -253,6 +263,7 @@ class Stepanov_Specular():
                 [0,1,0,0],\
                 [0,0,1,0],\
                 [0,0,0,1]])
+         #this is the vacuum matrix from the LHS of equation 15
          A_S_matrix2[...,1:A_S_matrix.shape[-1]+1]=A_S_matrix
          A_S_matrix2[...,0]=Matrix
          F_matrix2[...,1:A_S_matrix.shape[-1]+1]=F_matrix
@@ -268,7 +279,9 @@ class Stepanov_Specular():
          self.Pz=Pz2
          
              
-    def XM_define_Big(self): 
+    def XM_define_Big(self):
+         #this method has the purpose of going through equations 55 through 62 of Stepanov Sinha, using the same notation.
+         #Unlike for the 3D case, there is no need to perform changes of bases here
          A_S_Matrix=self.AS_Matrix
          F2=self.F_Matrix
          AS1=A_S_Matrix[...,0:A_S_Matrix.shape[-1]-1]
@@ -292,7 +305,8 @@ class Stepanov_Specular():
          self.Mrr=(self.Xrr-self.Mrt@self.Xtr)@self.F2_menos
              
     def Matrix_stack(self):
-        #performing the recursive matrix stack operation for calculating the specular reflection
+        #performing the recursive matrix stack operation for calculating the specular reflection. 
+        #Equations 63 through 70 of Stepanov Sinha
         self.count=0
         kz=2*np.pi/self.lamda*np.sin(self.theta)
         roughness_reduction=np.exp(-kz**2*self.sigma_roughness**2)
@@ -353,6 +367,7 @@ class Stepanov_Specular():
        #Ecuación 70 de Stepanov Sinha
         self.T_fields=np.array(T_fields)
         self.R_fields=np.array(R_fields)
+        #Fields within the sample in their eigen-bases for each particular layer
         self.specular_output=np.array(W_list_rt[-1])
         R=self.specular_output@T0
         self.I_output=np.abs(R[0])**2+np.abs(R[1])**2
@@ -378,6 +393,7 @@ class Stepanov_Specular():
         Basischange2=Basischange
         Basischange2[...,1,0]=Px2[2,...]*np.sin(self.theta)+Pz2[2,...]*np.cos(self.theta)
         Basischange2[...,1,1]=Px2[3,...]*np.sin(self.theta)+Pz2[3,...]*np.cos(self.theta)
+        #basis change matrix for converting the in-sample fields to the sigma-pi basis
         for l in range(Basischange.shape[0]):
             if np.linalg.det(Basischange[l,:,:])==0:
                 Basischange[l,:,:]=np.identity(2,dtype=complex)
@@ -401,5 +417,5 @@ class Stepanov_Specular():
             R_fields_linear[l,:,:]=(self.Basischange2[l,:,:])@self.R_fields[l,:]    
         self.T_fields_linear=np.array(T_fields_linear)
         self.R_fields_linear=np.array(R_fields_linear)
-        
+        #outputting the fields in the sigma-pi basis
         
