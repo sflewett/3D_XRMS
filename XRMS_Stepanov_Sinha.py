@@ -5,23 +5,22 @@ Created on Mon Jun  5 09:40:32 2023
 @author: sflewett
 """
 import numpy as np
+import numpy.ma as ma
+from operator import and_
 from scipy.interpolate import RegularGridInterpolator
 from numba import njit
 #from Sample_Class_test import XRMS_Sample
-from Stepanov_Specular import Stepanov_Specular
 from LSMO_sample_class import LSMO
 #import time
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from ffmpeg import FFmpeg, Progress
-#Set this all up so that intrinsically 1d input arrays are only input as 1d arrays
-#look up __all__ statement
-#read up on class inheritance
-#THIS CODE IS CURRENTLY SET UP SO THAT THE MAGNETIC INPUT IS 3D
+
 
 class XRMS_Simulate():
-    def __init__(self, sample,specular,theta,energy):
-        
+    def __init__(self, sample,theta,energy,full_column="full",column=[0,0]):
+        #input is a sample class "sample", an angle of incidence "theta" in radians, a photon energy "energy" in eV, 
+        #a string "full" or "column" to decide to evaluate over the whole array, or a single column within
+        #and the indices of this column given by the 2-vector column. 
         c=3e8
         f=energy*1.6e-19/6.626e-34
         self.lamda=c/f
@@ -29,25 +28,86 @@ class XRMS_Simulate():
         self.f_charge=sample.f_Charge
         self.f_Mag=sample.f_Mag
         self.f_Mag2=sample.f_Mag2
+        self.full_column=full_column
         self.r0=2.82e-15
         self.na=sample.na
         self.M=sample.M
+        self.M_tot=(self.M**2).sum(axis=0)
+        self.My=self.M[1,:]
+        self.TMOKE_Threshold=sample.TMOKE_Threshold
+        self.mask1=self.M_tot==0
+        self.mask1[np.abs(self.My)>self.TMOKE_Threshold]=True
+        self.mask2=self.M_tot!=0
+        self.mask3=np.abs(self.My)<self.TMOKE_Threshold
+        
+        if full_column=="column":
+            self.M=sample.M[:,column[0]:column[0]+1,column[1]:column[1]+1,:]
+            self.M_tot=(self.M**2).sum(axis=0)
+            self.My=self.M[1,:]
+            self.mask1=self.M_tot==0
+            self.mask1[np.abs(self.My)>self.TMOKE_Threshold]=True
+            self.mask2=self.M_tot!=0
+            self.mask3=np.abs(self.My)<self.TMOKE_Threshold
+            self.f_charge=sample.f_Charge[column[0]:column[0]+1,column[1]:column[1]+1,:]
+            self.f_Mag=sample.f_Mag[column[0]:column[0]+1,column[1]:column[1]+1,:]
+            self.f_Mag2=sample.f_Mag2[column[0]:column[0]+1,column[1]:column[1]+1,:]
+            self.na=sample.na[column[0]:column[0]+1,column[1]:column[1]+1,:]
+        self.z=sample.z
+        d=np.diff(self.z)
+        d2=np.zeros((len(d)+1))
+        d2[1:len(d)+1]=d
+        d2[0]=d[1];
+        self.d=d2
+        #we have to set masks for the different calculation regimes
+        #1. Magnetic normal
+        #2. Non-magnetic (reduces to the standard Fresnel Formulae)
+        #3. Magnetic TMOKE
         self.size_x=sample.size_x
         self.size_y=sample.size_y
-        self.T_fields_linear=specular.T_fields_linear
+        if full_column=="column":
+            self.size_x=sample.size_x
+            self.size_y=sample.size_y
+        #self.T_fields_linear=specular.T_fields_linear
         self.sample=sample
         self.factor=self.na*self.r0*self.lamda**2/2/np.pi
         self.factor=np.sum(self.factor)/np.product(self.factor.shape)
         f_average=np.sum(self.f_charge)/np.product(self.f_charge.shape)
         self.n_average=1-self.factor*f_average
+        self.Incident=sample.Incident#polarization basis of the incident light (sigma, pi)
+        self.sigma_roughness=sample.sigma_roughness
         
+        
+    def mask_expand(self,mask,array_dimens,before_after="before"):
+        #takes the mask and expands its dimensionality to the new mask dimensions:
+        #if the new mask is to have dimensions [array_dimens, old mask dimensions],
+        #then select "before",otherwise select "after"
+            def expand_one_dimension(mask,dimension,before_after):
+                mask_expanded=np.array([mask for i in range(dimension)])
+                if before_after=="after":
+                    dims=len(mask.shape)
+                    permutation=[]
+                    for i in range(dims):
+                        permutation.append(i+1)
+                    permutation.append(0)
+                    mask_expanded=np.transpose(mask_expanded, permutation)
+                return mask_expanded
+            
+            if before_after=="after":
+                array_dimens.reverse()
+            for j in range(len(array_dimens)):
+                mask=expand_one_dimension(mask,array_dimens[j],before_after)
+            
+            return mask
+                    
     def Chi_define(self):
         #M is set up as [m_vector,xpos,ypos,zpos]
         #Chi as defined in the Stepanov Sinha Paper
         #X:longitudinal
         #Y: Transverse
         #Z: polar
-        #na es la densidad de átomos
+        #na is the number of atoms per square meter.
+        #the above parameters are all set in the Sample class
+        
         lamda=self.lamda
         f_charge=self.f_charge
         f_Mag=self.f_Mag
@@ -85,31 +145,30 @@ class XRMS_Simulate():
         MM = np.array([[M[j,...]*M[i,...] for i in range(3)] for j in range(3)])
         chi = (chi_zero)*delta\
             -complex(0,1)*B*temp+C*MM
+        self.chi2=-complex(0,1)*B*temp+C*MM
+        
         self.chi=chi
         self.chi_zero=chi_zero*ones
-        
-        
+        self.chi_mask1=self.mask_expand(self.mask1,[3,3],before_after="before")
+        self.chi_mask2=self.mask_expand(self.mask2,[3,3],before_after="before")
+        self.chi_mask3=self.mask_expand(self.mask3,[3,3],before_after="before")
+        self.chi_masked1=ma.masked_array(chi,self.chi_mask1)
+        self.chi_masked2=ma.masked_array(chi,self.chi_mask2)
+        self.chi_masked3=ma.masked_array(chi,self.chi_mask3)
+        self.chi_zero_masked2=ma.masked_array(chi_zero,self.mask2)
         
     def get_U(self):
         #Equations 25 to 30 of Stepanov-Sinha
-        M=self.M
-        chi=self.chi
-        chi_zero=self.chi_zero
         theta=self.theta
         
         nx=np.array(np.cos(theta),dtype=complex);
         gamma=np.array(np.sin(theta),dtype=complex);
-        M_tot=(M**2).sum(axis=0)
-        M_tot2=M_tot
-        dim1=M_tot2.shape[0]
-        dim2=M_tot2.shape[1]
-        dim3=M_tot2.shape[2]
+        
+        dim1=self.M_tot.shape[0]
+        dim2=self.M_tot.shape[1]
+        dim3=self.M_tot.shape[2]
         dim=np.array([dim1,dim2,dim3],dtype=np.int64)
-        
-        mask1=M_tot!=0
-        mask2=M_tot==0
-        #import quartic_solver_analytic
-        
+                 
         @njit
         #Without njit, this is by far the slowest part of the entire code
         def Uloop(M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays):
@@ -141,7 +200,7 @@ class XRMS_Simulate():
             chi[0,1,...]*chi[1,2,...]*chi[2,0,...]+chi[1,0,...]*chi[2,1,...]*chi[0,2,...]
             
             output_arrays=np.array([u1,u2,u3,u4],dtype=np.complex128)                    
-            u1,u2,u3,u4=Uloop(M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays)
+            u1,u2,u3,u4=Uloop(self.M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays)
             u=np.array([u1,u2,u3,u4],dtype=complex)
             #here we literally copy from equations 25-30 of Stepanov Sinha
             imag=u*complex(0,1)
@@ -187,26 +246,49 @@ class XRMS_Simulate():
             u=np.array([u1,u2,u3,u4],dtype=complex)
             
             return u
-        U_dims=[4]+list(M_tot.shape) 
-        U=np.zeros((U_dims),dtype=complex)
-        U[:,mask1]=np.array(Umag(chi,nx,gamma))[:,mask1]
-        U[:,mask2]=np.array(Unonmag(chi_zero,nx,gamma))[:,mask2]
-        self.U=U
+        def U_TMOKE(chi,nx,gamma):# non magnetic case
+            #Equations 39-44 of Stepanov Sinha
+            u1=np.zeros((dim),dtype=np.float64)
+            u2=u1
+            u3=u1
+            u4=u1
+            delta=chi[0,2,...]**2*(1+chi[0,0,...])
+            u1=(gamma**2+chi[1,1,...])**0.5
+            u3=-u1
+            u2=(gamma**2+chi[2,2,...]+delta)**0.5
+            u4=-u2
+            u=np.array([u1,u2,u3,u4],dtype=complex)
+            
+            return u       
+        
+        self.UMask1=self.mask_expand(self.mask1,[4],before_after="before")
+        self.UMask2=self.mask_expand(self.mask2,[4],before_after="before")
+        self.UMask3=self.mask_expand(self.mask3,[4],before_after="before")
+        U1=np.array(Umag(self.chi,nx,gamma))
+        U2=np.array(Unonmag(self.chi_zero_masked2,nx,gamma))
+        U3=np.array(U_TMOKE(self.chi_masked3,nx,gamma))
+        self.U1_masked=ma.masked_array(U1,self.UMask1)
+        self.U2_masked=ma.masked_array(U2,self.UMask2)
+        self.U3_masked=ma.masked_array(U3,self.UMask3)
+        a=self.U1_masked
+        a.data[a.mask==True]=0
+        b=self.U2_masked
+        b.data[b.mask==True]=0
+        c=self.U3_masked
+        c.data[c.mask==True]=0
+        self.U=np.ma.array(a.data+b.data+c.data,mask=list(map(and_,map(and_,a.mask,b.mask),c.mask))).data
         #Ecuaciones 25-30 de Stepanov Sinha
     
     def get_A_S_matrix(self):#medium boundary matrix
-        #Equation 15 of Stepanov Sinha in the non-magnetic case, and equation 36 in the magnetic case
-         M=self.M
-         chi=self.chi
+        #Equation 15 of Stepanov Sinha in the non-magnetic case, and equation 36 in the magnetic case, and equation 42 in the TMOKE case
+         
          chi_zero=self.chi_zero
          theta=self.theta
          nx=np.array(np.cos(theta),dtype=complex);
          gamma=np.array(np.sin(theta),dtype=complex);
-         M_tot=(M**2).sum(axis=0)
-         mask1=M_tot!=0
-         mask2=M_tot==0
-         def Small_matrix_nomag(chi,chi_zero,theta):
-             u=self.U
+         M_tot=self.M_tot
+         def Matrix_nomag(chi,chi_zero,theta):
+             u=self.U2_masked
              epsilon=1+chi_zero
              ones=np.ones(M_tot.shape)
              zeros=np.zeros(M_tot.shape)
@@ -214,15 +296,20 @@ class XRMS_Simulate():
                     [zeros,epsilon**0.5,zeros,epsilon**0.5],\
                     [u[0,...],zeros,u[1,...],zeros],\
                     [zeros,u[0,...]/epsilon**0.5,zeros,u[1,...]/epsilon**0.5]]
+             zeros=u[0,...]-u[0,...]    
+             F=[[np.exp(-complex(0,1)*u[0,...]*2*np.pi/self.lamda*self.d),zeros,zeros,zeros],\
+                      [zeros,np.exp(-complex(0,1)*u[0,...]*2*np.pi/self.lamda*self.d),zeros,zeros],\
+                      [zeros,zeros,np.exp(-complex(0,1)*u[1,...]*2*np.pi/self.lamda*self.d),zeros],\
+                      [zeros,zeros,zeros,np.exp(-complex(0,1)*u[1,...]*2*np.pi/self.lamda*self.d)]]
                  
              P_dims=[4]+list(M_tot.shape) 
              Px=np.zeros((P_dims))
              Pz=Px
              #for the non-magnetic case, the eigenvectors, whose x and z components are labelled Px and Pz
              #do not have a meaning expressed in terms of Py, as is the case for the magnetic case
-             return np.array(Matrix,dtype=complex),Px,Pz
-         def Small_matrix_mag(chi,chi_zero,theta,nx,gamma):
-             u=self.U
+             return np.array(Matrix,dtype=complex),np.array(F,dtype=complex),Px,Pz
+         def Matrix_mag(chi,chi_zero,theta,nx,gamma):
+             u=self.U1_masked
              D=(chi[0,2,...]+u*nx)*(chi[2,0,...]+u*nx)-(1-u**2+chi[0,0,...])*(gamma**2+chi[2,2,...])
              Px=(chi[0,1,...]*(gamma**2+chi[2,2,...])-chi[2,1,...]*(chi[0,2,...]+u*nx))/D
              Pz=(chi[2,1,...]*(1-u**2+chi[0,0,...])-chi[0,1,...]*(chi[2,0,...]+u*nx))/D
@@ -233,64 +320,89 @@ class XRMS_Simulate():
              w=Px
              #equations 37 and 38 of Stepanov Sinha
              ones=np.ones(M_tot.shape,dtype=complex)
+             zeros=u[0,...]-u[0,...]
              Matrix=[[ones,ones,ones,ones],\
                      [v[0,...],v[1,...],v[2,...],v[3,...]],\
                      [u[0,...],u[1,...],u[2,...],u[3,...]],\
                      [w[0,...],w[1,...],w[2,...],w[3,...]]]
-             
-             return np.array(Matrix),Px,Pz
+             F=[[np.exp(-complex(0,1)*u[0,...]*2*np.pi/self.lamda*self.d),zeros,zeros,zeros],\
+                     [zeros,np.exp(-complex(0,1)*u[1,...]*2*np.pi/self.lamda*self.d),zeros,zeros],\
+                     [zeros,zeros,np.exp(-complex(0,1)*u[2,...]*2*np.pi/self.lamda*self.d),zeros],\
+                     [zeros,zeros,zeros,np.exp(-complex(0,1)*u[3,...]*2*np.pi/self.lamda*self.d)]]
+             return np.array(Matrix,dtype=complex),np.array(F,dtype=complex),Px,Pz
          
-         A_S_matrix_dims=[4,4]+list(M_tot.shape) 
-         #the naming comes from the fact that some resources name this medium boundary matrix A, whereas Stepanov Sinha uses S
-         A_S_matrix=np.zeros((A_S_matrix_dims),dtype=complex)
-         P_dims=[4]+list(M_tot.shape) 
-         self.Px=np.zeros((P_dims),dtype=complex)
-         self.Pz=np.zeros((P_dims),dtype=complex)
-         #initializing multidimenisonal arrays
+         def Matrix_TMOKE(chi,nx,gamma):
+             u=self.U3_masked
+             delta=chi[0,2,...]**2*(1+chi[0,0,...])
+             Rx=-(u*nx+chi[0,2,...])/(nx**2+delta)
+             v=u*Rx-nx
+             w=Rx
+             zeros=np.zeros(M_tot.shape)
+             ones=np.ones(M_tot.shape,dtype=complex)
+             Matrix=[[ones,zeros,ones,zeros],\
+                     [zeros,v[1,...],zeros,v[3,...]],\
+                     [u[0,...],zeros,u[2,...],zeros],\
+                     [zeros,w[1,...],zeros,w[3,...]]]
+             F=[[np.exp(-complex(0,1)*u[0,...]*2*np.pi/self.lamda*self.d),zeros,zeros,zeros],\
+                     [zeros,np.exp(-complex(0,1)*u[1,...]*2*np.pi/self.lamda*self.d),zeros,zeros],\
+                     [zeros,zeros,np.exp(-complex(0,1)*u[2,...]*2*np.pi/self.lamda*self.d),zeros],\
+                     [zeros,zeros,zeros,np.exp(-complex(0,1)*u[3,...]*2*np.pi/self.lamda*self.d)]]
+             return np.array(Matrix,dtype=complex),np.array(F,dtype=complex),Rx
+         
+         
          self.get_U()
+         A_S_Mask1=self.mask_expand(self.mask1,[4,4],before_after="before")
+         A_S_Mask2=self.mask_expand(self.mask2,[4,4],before_after="before")
+         A_S_Mask3=self.mask_expand(self.mask3,[4,4],before_after="before")
          
-         temp1,temp2,temp3=Small_matrix_mag(chi,chi_zero,theta,nx,gamma)
-         A_S_matrix[:,:,mask1],self.Px[:,mask1],self.Pz[:,mask1]=temp1[:,:,mask1],temp2[:,mask1],temp3[:,mask1]
-         temp1,temp2,temp3=Small_matrix_nomag(chi,chi_zero,theta)
-         A_S_matrix[:,:,mask2],self.Px[:,mask2],self.Pz[:,mask2]=temp1[:,:,mask2],temp2[:,mask2],temp3[:,mask2]
-         A_S_matrix2=np.zeros((A_S_matrix.shape[0],A_S_matrix.shape[1],A_S_matrix.shape[2],A_S_matrix.shape[3],A_S_matrix.shape[4]+1),dtype=complex)
-         ones=np.ones(M_tot[:,:,0].shape)
-         zeros=np.zeros(M_tot[:,:,0].shape)
-         Matrix=np.array([[ones,zeros,ones,zeros],\
-                [zeros,ones,zeros,ones],\
-                [ones*gamma,zeros,-ones*gamma,zeros],\
-                [zeros,ones*gamma,zeros,-ones*gamma]])
-             #this is the vacuum matrix from the LHS of equation 15
-         A_S_matrix2[...,1:A_S_matrix.shape[-1]+1]=A_S_matrix
-         A_S_matrix2[...,0]=Matrix
-         self.AS_Matrix=A_S_matrix2
-         Px2=np.zeros((self.Px.shape[0],self.Px.shape[1],self.Px.shape[2],self.Px.shape[3]+1),dtype=complex)
-         Pz2=np.zeros((self.Px.shape[0],self.Px.shape[1],self.Px.shape[2],self.Px.shape[3]+1),dtype=complex)
-         Px2[...,1:self.Px.shape[-1]+1]=self.Px
-         Pz2[...,1:self.Pz.shape[-1]+1]=self.Pz
-         self.Px=Px2
-         self.Pz=Pz2
-     
-    def XM_define_Small(self): 
+         temp1,temp2,temp3,temp4=Matrix_mag(self.chi_masked1,chi_zero,theta,nx,gamma)
+         A_S_matrix1,F_matrix1,self.Px1,self.Pz1=temp1,temp2,temp3,temp4
+         self.A_S_Matrix1_masked=ma.masked_array(A_S_matrix1,A_S_Mask1)
+         self.F_Matrix1_masked=ma.masked_array(F_matrix1,A_S_Mask1)
+         self.Px1_masked=ma.masked_array(self.Px1,self.U1_masked)
+         self.Pz1_masked=ma.masked_array(self.Pz1,self.U1_masked)   
+                            
+         temp1,temp2,temp3,temp4=Matrix_nomag(self.chi_masked2,chi_zero,theta)
+         A_S_matrix2,F_matrix2,self.Px2,self.Pz2=temp1,temp2,temp3,temp4
+         self.F_Matrix2_masked=ma.masked_array(F_matrix2,A_S_Mask2)
+         self.A_S_Matrix2_masked=ma.masked_array(A_S_matrix2,A_S_Mask2)
+         self.Px2_masked=ma.masked_array(self.Px2,self.U2_masked)
+         self.Pz2_masked=ma.masked_array(self.Pz2,self.U2_masked)
+         
+         temp1,temp2,temp3=Matrix_TMOKE(self.chi_masked3,nx,gamma)
+         A_S_matrix3,F_matrix3,self.Rx=temp1,temp2,temp3
+         self.F_Matrix3_masked=ma.masked_array(F_matrix3,A_S_Mask3)
+         self.A_S_Matrix3_masked=ma.masked_array(A_S_matrix3,A_S_Mask3)
+         self.Rx_masked=ma.masked_array(self.Rx,self.U3_masked)
+              
+    def XM_define(self): 
         #this method has the purpose of moving through from the medium boundary matrices to the single interface reflection coefficients, using the formalism of
         #the Stepanov-Sinha paper. 
+         a=self.A_S_Matrix1_masked
+         a.data[a.mask==True]=0
+         b=self.A_S_Matrix2_masked
+         b.data[b.mask==True]=0
+         c=self.A_S_Matrix3_masked
+         c.data[c.mask==True]=0
+         A_S_Matrix=np.ma.array(a.data+b.data+c.data,mask=list(map(and_,map(and_,a.mask,b.mask),c.mask))).data
+         a=self.F_Matrix1_masked
+         a.data[a.mask==True]=0
+         b=self.F_Matrix2_masked
+         b.data[b.mask==True]=0
+         c=self.F_Matrix3_masked
+         c.data[c.mask==True]=0
+         F_Matrix=np.ma.array(a.data+b.data+c.data,mask=list(map(and_,map(and_,a.mask,b.mask),c.mask))).data
          theta=self.theta
-         A_S_Matrix=self.AS_Matrix
+         
          M=self.M
-         Px=self.Px
-         Pz=self.Pz
+         
          AS1=A_S_Matrix[...,0:A_S_Matrix.shape[-1]-1]#upper
          AS2=A_S_Matrix[...,1:A_S_Matrix.shape[-1]]#lower
+         F2=F_Matrix[...,1:A_S_Matrix.shape[-1]]
          #reflection coefficients are defined by multiplying two medium boundary matrices across a boundary
         
-         M2=np.zeros((M.shape[0],M.shape[1],M.shape[2],M.shape[3]+1),dtype=complex)
-         M2[:,:,:,1:M2.shape[-1]]=M
-         M=M2
          M_tot=(M**2).sum(axis=0)
-         mask1=M_tot!=0
-         mask2=M_tot==0
-         mask1=mask1[...,0:M_tot.shape[-1]-1]
-         mask2=mask2[...,0:M_tot.shape[-1]-1]
+         
          if len(A_S_Matrix.shape)==3:
              permutation=(2,0,1)
          if len(A_S_Matrix.shape)==4:
@@ -299,67 +411,230 @@ class XRMS_Simulate():
              permutation=(2,3,4,0,1)
          AS1=np.transpose(AS1, permutation)
          AS2=np.transpose(AS2, permutation)
-        
+         F2=np.transpose(F2, permutation)
+         self.F2_mas=F2[...,0:2,0:2]
+         self.F2_menos=F2[...,2:4,2:4]
          X=np.matmul(np.linalg.inv(AS1),AS2)
          #Equation taken from the line of text below Equation 58 in Stepanov Sinha
          Xtt=X[...,0:2,0:2]
+         Xtr=X[...,0:2,2:4]
          Xrt=X[...,2:4,0:2]
+         Xrr=X[...,2:4,2:4]
+         self.Mtt=np.linalg.inv(self.F2_mas)@np.linalg.inv(Xtt)
+         self.Mtr=-self.Mtt@Xtr@self.F2_menos
+         self.Mrt=Xrt@np.linalg.inv(Xtt)
+         self.Mrr=(Xrr-self.Mrt@Xtr)@self.F2_menos
          #Equation 60 of Stepanov Sinha
          #@jit
-         def Mrt_nomag_function(Xtt,Xrt,mask): 
-             Mrt=np.matmul(Xrt,np.linalg.inv(Xtt))
-             return Mrt
-         #simply applying equation 62 of Stepanov Sinha
+         
          #@njit
          def Mrt_mag(Xtt,Xrt,M_tot):
+             #exports the Mrt matrix in a 
+             Px1=self.Px1_masked
+             Rx=self.Rx_masked
+             Pz1=self.Pz1_masked
              
-             Px2=Px[...,0:Px.shape[-1]-1]
-            
-             Pz2=Pz[...,0:Pz.shape[-1]-1]
+             Basischange_Mask1=self.mask_expand(self.mask1,[2,2],before_after="after")
+             Basischange_Mask2=self.mask_expand(self.mask2,[2,2],before_after="after")
+             Basischange_Mask3=self.mask_expand(self.mask3,[2,2],before_after="after")
              
-             Basischange=Xrt-Xrt
-             ones=np.ones(M_tot[:,:,0:-1].shape)
+             Basischange1a=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             Basischange2a=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             Basischange3a=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             Basischange1b=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             Basischange2b=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             Basischange3b=np.zeros(Basischange_Mask1.shape,dtype=complex)
+             ones=np.ones(M_tot.shape,dtype=complex)
              zeros=ones-ones
-             Basischange[...,0,0]=ones
-             Basischange[...,0,1]=ones
-             Basischange[...,1,0]=Px2[0,...]*np.sin(theta)+Pz2[0,...]*np.cos(theta)
-             Basischange[...,1,1]=Px2[1,...]*np.sin(theta)+Pz2[1,...]*np.cos(theta)
+             Basischange1a[...,0,0]=ones
+             Basischange1a[...,0,1]=ones
+             Basischange1a[...,1,0]=-Px1.data[0,...]*np.sin(theta)+Pz1.data[0,...]*np.cos(theta)
+             Basischange1a[...,1,1]=-Px1.data[1,...]*np.sin(theta)+Pz1.data[1,...]*np.cos(theta)
              #to change from the basis of the incoming light to the eigenbasis of the layer
-             Basischange2=Basischange
-             Basischange2[...,1,0]=Px2[2,...]*np.sin(theta)+Pz2[2,...]*np.cos(theta)
-             Basischange2[...,1,1]=Px2[3,...]*np.sin(theta)+Pz2[3,...]*np.cos(theta)
+             Basischange1b[...,0,0]=ones
+             Basischange1b[...,0,1]=ones
+             Basischange1b[...,1,0]=Px1.data[2,...]*np.sin(theta)+Pz1.data[2,...]*np.cos(theta)
+             Basischange1b[...,1,1]=Px1.data[3,...]*np.sin(theta)+Pz1.data[3,...]*np.cos(theta)
              #to change from the eigenbasis of the layer to the eigenbasis of the outgoing light
              #these matrices are defined in equation 8 of the new paper
-             Basischange=np.array(Basischange)
-             Basischange2=np.array(Basischange2)
-             ones=np.ones(M_tot[:,:,0].shape)
-             zeros=ones-ones
-             for j in range(Basischange.shape[2]):
-                 if np.sum(M_tot[:,:,j])==0:
-                     Basischange[:,:,j,0,0]=ones
-                     Basischange[:,:,j,0,1]=zeros
-                     Basischange[:,:,j,1,0]=zeros
-                     Basischange[:,:,j,1,1]=ones
-                     Basischange2[:,:,j,0,0]=ones
-                     Basischange2[:,:,j,0,1]=zeros
-                     Basischange2[:,:,j,1,0]=zeros
-                     Basischange2[:,:,j,1,1]=ones
+             Basischange1a=ma.masked_array(Basischange1a,Basischange_Mask1)
+             Basischange1b=ma.masked_array(Basischange1b,Basischange_Mask1)
+                       
+                 
+             Basischange2a[:,:,:,0,0]=ones
+             Basischange2a[:,:,:,0,1]=zeros
+             Basischange2a[:,:,:,1,0]=zeros
+             Basischange2a[:,:,:,1,1]=ones
+             Basischange2b[:,:,:,0,0]=ones
+             Basischange2b[:,:,:,0,1]=zeros
+             Basischange2b[:,:,:,1,0]=zeros
+             Basischange2b[:,:,:,1,1]=ones
+             
+             Basischange2a=ma.masked_array(Basischange2a,Basischange_Mask2)
+             Basischange2b=ma.masked_array(Basischange2b,Basischange_Mask2)
+             
+             Basischange3a[...,0,0]=ones
+             Basischange3a[...,0,1]=zeros
+             Basischange3a[...,1,0]=zeros
+             Basischange3a[...,1,1]=Rx.data[1,...]*np.sin(theta)*np.cos(theta)+(np.cos(theta))**2
+             #to change from the basis of the incoming light to the eigenbasis of the layer
+             Basischange3b[...,0,0]=ones
+             Basischange3b[...,0,1]=zeros
+             Basischange3b[...,1,0]=zeros
+             Basischange3b[...,1,1]=Rx.data[3,...]*np.sin(theta)*np.cos(theta)+(np.cos(theta))**2
+             
+             Basischange3a=ma.masked_array(Basischange3a,Basischange_Mask3)
+             Basischange3b=ma.masked_array(Basischange3b,Basischange_Mask3)
+             
+             a=Basischange1a
+             a.data[a.mask==True]=0
+             b=Basischange2a
+             b.data[b.mask==True]=0
+             c=Basischange3a
+             c.data[c.mask==True]=0
+             Basischange1=np.ma.array(a.data+b.data+c.data,mask=list(map(and_,map(and_,a.mask,b.mask),c.mask))).data
+             
+             a=Basischange1b
+             a.data[a.mask==True]=0
+             b=Basischange2b
+             b.data[b.mask==True]=0
+             c=Basischange3b
+             c.data[c.mask==True]=0
+             Basischange2=np.ma.array(a.data+b.data+c.data,mask=list(map(and_,map(and_,a.mask,b.mask),c.mask))).data
+             
+             
+             
              #for the non-magnetic layers, the basischange matrix is simply the identity matrix
              #@jit
              def Matrixalgebra(Basischange,Basischange2,Xrt,Xtt):
                  Eigen_reflection=np.matmul(Xrt,np.linalg.inv(Xtt))         
-                 processed_matrices=np.matmul(np.matmul(Basischange2,Eigen_reflection),np.linalg.inv(Basischange))
+                 processed_matrices=np.matmul(np.matmul(Basischange2[:,:,0:-1,:,:],Eigen_reflection),np.linalg.inv(Basischange[:,:,0:-1,:,:]))
                  return processed_matrices
-             Mrt=Matrixalgebra(Basischange,Basischange2,Xrt,Xtt)
+             Mrt_3D=Matrixalgebra(Basischange1,Basischange2,Xrt,Xtt)
              #simply applying equation 62 of Stepanov Sinha, and applying the basischange
-             return Mrt
+             return Mrt_3D,Basischange1,Basischange2
          
          
-         self.Mrt_matrix=Mrt_mag(Xtt,Xrt,M_tot)
+         self.Mrt_matrix,self.Basischange1,self.Basischange2=Mrt_mag(Xtt,Xrt,M_tot)
          
          return self.Mrt_matrix
      #this is the main routine called by the XRMS simulation loop.
-     
+    def Matrix_stack(self,stack_coordinates=[0,0]):
+        
+        #performing the recursive matrix stack operation for calculating the specular reflection. 
+        #Equations 63 through 70 of Stepanov Sinha
+        self.count=0
+        kz=2*np.pi/self.lamda*np.sin(self.theta)
+        roughness_reduction=np.exp(-kz**2*self.sigma_roughness**2)
+        #Empezando en la superficie
+        #Mtt,Mtr,Mrt,Mrr,Px,Pz,u=self.Mtt,self.Mtr,self.Mrt,self.Mrr,self.Px,self.Pz,self.U
+        #Agregando la parte de la rugosidad de Nevot-Croce, Ecuación 5,7 de Lee (1) (Aproximación de Born)
+        T0=(self.Incident)
+        M_list_tt=[]
+        M_list_tr=[]
+        M_list_rt=[]
+        M_list_rr=[]
+        W_list_tt=[]
+        W_list_tr=[]
+        W_list_rt=[]
+        W_list_rr=[]
+        R_fields=[]
+        T_fields=[]
+        tempzeros=np.array([[0],[0]])
+        M_list_tt.append(self.Mtt[stack_coordinates[0],stack_coordinates[1],0,:,:])
+        M_list_tr.append(self.Mtr[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)
+        M_list_rt.append(self.Mrt[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)#Aplicando la rugosidad solamente a las partes relacionados a la reflexión
+        M_list_rr.append(self.Mrr[stack_coordinates[0],stack_coordinates[1],0,:,:])
+        W_list_tt.append(self.Mtt[stack_coordinates[0],stack_coordinates[1],0,:,:])
+        W_list_tr.append(self.Mtr[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)
+        W_list_rt.append(self.Mrt[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)
+        W_list_rr.append(self.Mrr[stack_coordinates[0],stack_coordinates[1],0,:,:])
+        R_fields.append(tempzeros)
+        T_fields.append(tempzeros)
+        for i in range(1,len(self.z)-1):
+            #print(params[i])
+            
+            #Selección de parametros elementales
+            Mtt,Mtr,Mrt,Mrr=self.Mtt[stack_coordinates[0],stack_coordinates[1],i,:,:],self.Mtr[stack_coordinates[0],stack_coordinates[1],i,:,:],self.Mrt[stack_coordinates[0],stack_coordinates[1],i,:,:],self.Mrr[stack_coordinates[0],stack_coordinates[1],i,:,:]
+            M_list_tt.append(Mtt)
+            M_list_tr.append(Mtr*roughness_reduction)
+            M_list_rt.append(Mrt*roughness_reduction)
+            M_list_rr.append(Mrr)
+            II=np.array([[1,0],[0,1]])
+            A=M_list_tt[i]@np.linalg.inv(II-W_list_tr[i-1]@M_list_rt[i])
+            B=W_list_rr[i-1]@np.linalg.inv(II-M_list_rt[i]@W_list_tr[i-1])
+            
+            ##OJO AQUÏ Papers tienen definiciones diferentes
+            Wtt=A@W_list_tt[i-1]
+            Wtr=M_list_tr[i]+A@W_list_tr[i-1]@M_list_rr[i]
+            Wrt=W_list_rt[i-1]+B@M_list_rt[i]@W_list_tt[i-1]
+            Wrr=B@M_list_rr[i]
+            #Ecuaciones 66 y 67 de Stepanov Sinha
+            W_list_tt.append(Wtt)
+            W_list_tr.append(Wtr)
+            W_list_rt.append(Wrt)
+            W_list_rr.append(Wrr)
+            R_fields.append(tempzeros)#Inicializando las listas
+            T_fields.append(tempzeros)
+            self.count=self.count+1
+        for i in range(len(self.z)-3,-1,-1):
+            R_fields[i]=np.linalg.inv(II-M_list_rt[i+1]@W_list_tr[i])@(M_list_rr[i+1]@R_fields[i+1]+M_list_rt[i+1]@W_list_tt[i]@T0)
+            T_fields[i]=W_list_tt[i]@T0+W_list_tr[i]@R_fields[i]
+       #Ecuación 70 de Stepanov Sinha
+        self.T_fields=np.array(T_fields)
+        self.R_fields=np.array(R_fields)
+        #Fields within the sample in their eigen-bases for each particular layer
+        self.specular_output=np.array(W_list_rt[-1])
+        R=self.specular_output@T0
+        self.I_output=np.abs(R[0])**2+np.abs(R[1])**2
+        #just changed the code to output the matrix of overall reflection coefficients
+        
+        Basischange1=self.Basischange1[stack_coordinates[0],stack_coordinates[1],1:,:,:]
+        Basischange2=self.Basischange2[stack_coordinates[0],stack_coordinates[1],1:,:,:]
+        T_fields_linear=np.zeros(self.T_fields.shape,dtype=complex)
+        R_fields_linear=np.zeros(self.R_fields.shape,dtype=complex)
+        for l in range(Basischange1.shape[0]):
+            T_fields_linear[l,:,:]=(Basischange1[l,:,:])@self.T_fields[l,:]
+            R_fields_linear[l,:,:]=(Basischange2[l,:,:])@self.R_fields[l,:]    
+        self.T_fields_linear=np.array(T_fields_linear)
+        self.R_fields_linear=np.array(R_fields_linear)
+        
+        temp=self.Mrt-self.Mrt
+        
+        self.efields=np.zeros((temp.shape[2],4,3),dtype=complex)
+        Px1=self.Px1_masked
+        Rx=self.Rx_masked
+        Pz1=self.Pz1_masked
+        for j in range (4):
+            for l in range(temp.shape[2]):
+                if self.mask1[0,0,j]==False:
+                    self.efields[l,j,0]=Px1[j,0,0,l]
+                    self.efields[l,j,1]=1.
+                    self.efields[l,j,2]=Pz1[j,0,0,l]
+        for j in range (4):
+            for l in range(temp.shape[2]):
+                if self.mask2[0,0,j]==False:
+                    if j%2==0:
+                        self.efields[l,j,0]=0
+                        self.efields[l,j,1]=1
+                        self.efields[l,j,2]=0
+                    else:
+                        self.efields[l,j,0]=np.sin(self.theta)
+                        self.efields[l,j,1]=0
+                        self.efields[l,j,2]=np.cos(self.theta)
+        for j in range (4):
+            for l in range(temp.shape[2]):
+                if self.mask3[0,0,j]==False:
+                    if j%2==0:
+                        self.efields[l,j,0]=0
+                        self.efields[l,j,1]=1
+                        self.efields[l,j,2]=0
+                    else:
+                        self.efields[l,j,0]=Rx[j,l]*np.cos(self.theta)
+                        self.efields[l,j,1]=0
+                        self.efields[l,j,2]=np.cos(self.theta)
+        
+        #outputting the fields in the sigma-pi basis 
     def get_R(self):
         att2=self.T_fields_linear
         
@@ -369,7 +644,7 @@ class XRMS_Simulate():
         #The reflection coefficients are to be scaled by the square of the relative field strength within the sample. We
         #scale by the square to include attenuation of both incident and reflected beams
         R_array=np.zeros(self.Mrt_matrix.shape,dtype=complex)
-        for l in range(att.shape[0]):
+        for l in range(att.shape[0]-1):
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
         self.R_array=R_array
         
@@ -409,7 +684,7 @@ class XRMS_Simulate():
         return u,umag,umag2
       
         
-    def get_Faraday_Parallel(self,specular):
+    def get_Faraday_Parallel(self):
         #this function calculates the differential absorption due to sections of the sample
         #magnetized parallel to the incident beam, and is especially important when 
         #there is an applied field applied.
@@ -426,7 +701,7 @@ class XRMS_Simulate():
             #to calculate the adjusted absorption
             nx=self.size_x
             ny=self.size_y
-            nz=self.sample.size_z
+            nz=self.sample.size_z+1
             
             dx=self.sample.dx
             dz=self.sample.dz
@@ -512,123 +787,128 @@ class XRMS_Simulate():
         #absorption factor        
         return adj_abs_plus_XMCD,adj_abs_minus_XMCD,adj_abs_plus_XMLD_pi,adj_abs_minus_XMLD_pi,adj_abs_plus_XMLD_trans,adj_abs_minus_XMLD_trans
         
+    def Ewald_sphere_interpolate(self,input_array, dx,dy,dz,det_pixel,detector_distance,n_det_x,n_det_y,angle_of_incidence):
+        #From a 3D reciprocal space map, extract what would appear on the detector.
+        #input_array: 3D reciprocal space map. Simply the 3D FFT of the array of reflection coefficients
+        #dx dy and dz are the pixel sizes of the 3D array or reflection coefficients
+        #det_pixel is the detector pixel size
+        #detector_distance is the sample to detector distance
+        #n_det_x and n_det_y are the detector sizes in number of pixels
+        #angle of incidence is the angle of incident light
+                         
+            nx=input_array.shape[0]
+            ny=input_array.shape[1]
+            nz=input_array.shape[2]
+            
+            pixel_thetax=np.arcsin(self.lamda/nx/dx)
+            pixel_thetay=np.arcsin(self.lamda/ny/dy)
+            pixel_thetaz=np.arcsin(self.lamda/nz/dz)
+            #theta values corresponding to the natural fft output
+            
+            pixel_qx=np.linspace(0,nx-1,nx)
+            pixel_qy=np.linspace(0,ny-1,ny)
+            pixel_qz=np.linspace(0,nz-1,nz)
+            #pixel numbers of the input array
+            
+            
+            delta_qz=4*np.pi/nz/dz
+            qz_origin=2*np.pi/self.lamda*np.sin(angle_of_incidence)
+            #centre of the Ewald sphere in terms of qz        
+            qz_scatter_pixel=nz/2-2*qz_origin/delta_qz
+            #pixel value in z of the centre of the scattered light            
+            
+            detector_y=np.linspace(-n_det_y/2-1,n_det_y/2,n_det_y)*det_pixel
+            detector_xz=np.linspace(-n_det_x/2-1,n_det_x/2,n_det_x)*det_pixel
+            
+            detector_angle_y=np.arctan(detector_y/detector_distance)
+            detector_angle_xz=np.arctan(detector_xz/detector_distance)
+            #detector angles for each detector pixel            
+            
+            detector_pixel_y=detector_angle_y/pixel_thetay+ny/2  
+            detector_pixel_x=detector_angle_xz/pixel_thetax*np.sin(angle_of_incidence)+nx/2           
+            detector_pixel_z=detector_angle_xz/pixel_thetaz*np.cos(angle_of_incidence)+qz_scatter_pixel
+            
+            ones_y=np.ones(n_det_y)
+            ones_xz=np.ones(n_det_x)
+            
+            det_x=np.transpose(np.outer(ones_y,detector_pixel_x))
+            det_y=np.outer(ones_xz,detector_pixel_y)
+            det_z=np.transpose(np.outer(ones_y,detector_pixel_z))
+            
+            interp = RegularGridInterpolator((pixel_qx, pixel_qy, pixel_qz),input_array)
+            pts=np.array([det_x,det_y,det_z])
+            permutation=(1,2,0)
+            pts=np.transpose(pts,permutation)
+            
+            return interp(pts)
         
+    
         
-    def R_array_2_Diffraction(self,R,z, z_grid_size):
-        #this method simulates the roughness free reflective diffraction pattern by calculating a 3D Fourier Transform, evaluated only at points on the
-        #Ewald sphere
-               
-        Fourier2d=np.fft.fftshift(np.fft.fftn(R, axes=(0, 1)),axes=(0,1)) 
-        
-        nn=R.shape[1]
-        delta_z_Fourier=z_grid_size#sample.unit_cell/2
-        #this needs to be changed to either the unit cell, or the multilayer dz value
-        n_average=self.n_average
-       # z_index=np.round(np.array(z)/delta_z_Fourier*np.real(n_average))
-        z_index=(np.array(z-z[np.int64(np.round(len(z)/2))])/delta_z_Fourier*np.real(n_average))
-        #the index of real space z value of the interpolated sample. For calculating this, we use the 
-        #average refractive index of the sample
-        delta_qx=4*np.pi/nn/self.sample.dx
-        delta_qz=4*np.pi/max(z_index)/delta_z_Fourier
-        pix_z=np.linspace(-nn/2,nn/2-1,nn)
-        temp=np.ones((1,nn))
-        kz=2*np.pi/self.lamda*np.sin(self.theta)
-        q_z=np.outer(pix_z,temp)*delta_qx*np.cos(self.theta)/np.sin(self.theta)+kz*2
-        #q_z value corresponding to each q_x value
-        #q_z=q_z-q_z+kz
-        qz_index=(q_z/delta_qz)
-        DFT_zeros=np.zeros((nn,nn,len(z_index)),dtype=complex)
-        @njit
-        def get_DFT(nn,z_index,qz_index,DFT_zeros):
-            DFT=DFT_zeros
-            for l in range (len(z_index)):
-                #print(l)
-                DFT[:,:,l]=np.exp(-2*np.pi*complex(0,1)/max(z_index)*qz_index*z_index[l])
-            return DFT
-        DFT=get_DFT(nn,z_index,qz_index,DFT_zeros) 
-                   #this line is to evaluate the 3D Fourier transform only over the Ewald Sphere
-        self.XRMS_Pure=[[np.sum(DFT*Fourier2d[:,:,:,0,0],2),np.sum(DFT*Fourier2d[:,:,:,0,1],2)],\
-                        [np.sum(DFT*Fourier2d[:,:,:,1,0],2),np.sum(DFT*Fourier2d[:,:,:,1,1],2)]]
-            #the name "Pure" is chosen because roughness is excluded at this stage
-        self.XRMS=self.XRMS_Pure
-        
-    def export_intensity(self,Incident):
+    def export_intensity(self,Incident,R,det_pixel=13.5e-6*4,det_distance=0.25,det_size=[256,256]):
+        #default 1024x1024 detector with 13.5 um pixels, used with 4x4 binning at a 25cm distance
+        #calculates the scattered intensity for a set of reflection coefficients R, and an incident polarization "Incident", where incident is a list
+        #of two complex numbers
         In=Incident
-        XRMS=self.XRMS
-        self.intensity=(In[0]*XRMS[0][0]+In[1]*XRMS[0][1])*np.conj(In[0]*XRMS[0][0]+In[1]*XRMS[0][1])+\
-        (In[0]*XRMS[1][0]+In[1]*XRMS[1][1])*np.conj(In[0]*XRMS[1][0]+In[1]*XRMS[1][1])
-        return self.intensity
-    def display_intensity(self,Incident):
-        diffraction=self.export_intensity(Incident)
+        Fourier3D=np.fft.fftshift(np.fft.fftn(np.fft.fftshift(R,axes=(0, 1,2)), axes=(0, 1,2)),axes=(0,1,2))
+        Intensity3D=(In[0]*Fourier3D[:,:,:,0,0]+In[1]*Fourier3D[:,:,:,0,1])*np.conj(In[0]*Fourier3D[:,:,:,0,0]+In[1]*Fourier3D[:,:,:,0,1])+\
+        (In[0]*Fourier3D[:,:,:,1,0]+In[1]*Fourier3D[:,:,:,1,1])*np.conj(In[0]*Fourier3D[:,:,:,1,0]+In[1]*Fourier3D[:,:,:,1,1])
+        output=self.Ewald_sphere_interpolate(Intensity3D, self.sample.dx,self.sample.dx,self.sample.unit_cell/2,det_pixel,det_distance,det_size[0],det_size[1],self.theta)
         
-        diffraction[:,100]=0
-        #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
+        return np.abs(output)
         
-        im=(np.real(diffraction[90:110,90:110]))
+if __name__=="__main__":
+    full_column="full"
+    #set "full" to run the 3D code, and set "column" to run the 1D code
+    n_angles=11
+    angle_start=20
+    angle_end=30
+    if full_column=="full":
+        output_array=np.zeros((256,256,n_angles))
+        output_array_conj=output_array.copy()
+        #pre_assigning arrays for the output
+        fig,ax = plt.subplots(1,1)
         
-        return im
+        #fig.suptitle('XRMS output')
+        plt.ylabel("pixel_long")
+        plt.xlabel("pixel_trans")
+    angles=np.linspace(angle_start,angle_end,n_angles)
+    #angles in degress at which the code is evaluated
+    differential_absorption=False
     
-
-
-output_array=np.zeros((200,200,501))
-output_array_conj=np.zeros((200,200,501))
-fig,ax = plt.subplots(1,1)
-
-#fig.suptitle('XRMS output')
-plt.ylabel("pixel_long")
-plt.xlabel("pixel_trans")
-count=0
-ims = []  
-angles=np.linspace(10,10,1)
-for theta_deg in angles:
-    print(theta_deg)
-    sample=LSMO()
-    Incident=sample.Incident
-    Incident2=np.array([[complex(1,0)],[complex(0,-1)]])
-    theta=theta_deg*np.pi/180
-    specular=Stepanov_Specular(sample,theta,energy=640,magnetic_diff='off')
-    specular.Chi_define()
-    specular.get_A_S_matrix()
-    specular.XM_define_Big()
-    specular.Matrix_stack()
-    
-    XRMS=XRMS_Simulate(sample,specular,theta,energy=640)
-    XRMS.Chi_define()
-    XRMS.get_A_S_matrix()
-    output=XRMS.XM_define_Small()
-    XRMS.get_R()
-    XRMS.get_Faraday_Parallel(specular)
-    sample.interpolate_nearest_neighbour(XRMS.R_array)
-    XRMS.R_array_2_Diffraction(R=sample.R_interp,z=sample.z_interp, z_grid_size=sample.unit_cell/2)
-    #here we need to input the array of reflection coefficients R, the original z coordinates z, and 
-    #the regular z mesh size to interpolate into z_grid_size.
-    
+    for count,theta_deg in enumerate(angles):
+        print(theta_deg)
+        sample=LSMO(full_column)
+        #read in the sample class
+        Incident=sample.Incident
+        Incident2=np.array([[complex(1,0)],[complex(0,-1)]])
+        theta=theta_deg*np.pi/180       
+        XRMS=XRMS_Simulate(sample,theta,energy=640,full_column=full_column)
+        XRMS.Chi_define()
+        XRMS.get_A_S_matrix()
+        XRMS.XM_define()
+        XRMS.Matrix_stack()
+        if full_column=="full":
+            XRMS.get_R()
+            if differential_absorption==True:
+                adj_abs_plus_XMCD,adj_abs_minus_XMCD,adj_abs_plus_XMLD_pi,adj_abs_minus_XMLD_pi,adj_abs_plus_XMLD_trans,adj_abs_minus_XMLD_trans=XRMS.get_Faraday_Parallel()
+            sample.interpolate_nearest_neighbour(XRMS.R_array)
         
-    #ax.set_title(f'XRMS output_{theta_deg}')
-    #ims.append([im])
+            output_array[:,:,count]=XRMS.export_intensity(Incident,XRMS.R_array)
+            output_array_conj[:,:,count]=XRMS.export_intensity(Incident2,XRMS.R_array)
+    if full_column=="full":        
+        def update(j):
+            theta_deg=angles
+            diffraction=output_array[:,:,j]-output_array_conj[:,:,j]
+            
+            #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
+            
+            im=(np.real(diffraction))
+            plt.title(f'XRMS output_{theta_deg[j]}')
+            plt.imshow(im)
+        ani = animation.FuncAnimation(fig,update,frames=len(angles), interval=200, blit=False,repeat_delay=1000)
+        ani.save("XRMS_precise.gif")
 
-    
-    output_array[:,:,count]=XRMS.export_intensity(Incident)
-    output_array_conj[:,:,count]=XRMS.export_intensity((Incident2))
-    count=count+1
-def update(j):
-    theta_deg=angles
-    diffraction=output_array[:,:,j]-output_array_conj[:,:,j]
-    diffraction[:,100]=0
-    #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
-    
-    im=(np.real(diffraction[90:110,90:110]))
-    plt.title(f'XRMS output_{theta_deg[j]}')
-    plt.imshow(im)
-ani = animation.FuncAnimation(fig,update,frames=len(angles), interval=200, blit=False,repeat_delay=1000)
-ani.save("XRMS.gif")
-#Bloch_correction=XRMS.get_Faraday_Parallel(specular)
-#output_array_conj2=np.resize(output_array_conj,(40000,501))
 
-#output_array2=np.resize(output_array,(40000,501))
-#np.savetxt('sigma'+'deep_LSMO'+'.csv',output_array2, delimiter=',')
-#np.savetxt('pi'+'deep_LSMO'+'.csv',output_array_conj2, delimiter=',')
-    
 
 
          

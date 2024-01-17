@@ -33,7 +33,7 @@ class XRMS_Sample():
         self.na_Gd=7900/0.157*6.0222e23
         self.na_Co=8900/0.0589*6.0222e23
         self.na_Al=2700/0.02698*6.0222e23
-        
+        self.TMOKE_Threshold=0.995
         self.M=np.zeros((3,self.size_x,self.size_y,self.size_z),dtype=complex)
         self.na=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)
         self.f_Henke=np.zeros((self.size_x,self.size_y,self.size_z),dtype=complex)

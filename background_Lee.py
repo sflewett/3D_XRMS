@@ -5,7 +5,7 @@
 #@author: sflewett
 #"""
 import numpy as np
-from Stepanov_Specular import Stepanov_Specular
+from XRMS_Stepanov_Sinha import XRMS_Simulate
 from LSMO_sample_class import LSMO
 from Sample_Class_test import XRMS_Sample
 import matplotlib.pyplot as plt
@@ -38,12 +38,13 @@ class Background_DWBA_Lee():
         self.h = np.array([0.3,0.3])        
         self.eta_perp=4.5e-8
         #These are parameters from the Lee 2003 paper
-        self.specular_0=Stepanov_Specular(self.sample,self.theta_0,self.energy)
+        self.specular_0=XRMS_Simulate(self.sample,self.theta_0,self.energy,full_column="column")
+        #no point running the XRMS code in full 3D mode here, because we convolve with the magnetic scattering pattern afterwards.
         self.specular_0.Chi_define()
         self.specular_0.get_A_S_matrix()
-        self.specular_0.XM_define_Big()
+        self.specular_0.XM_define()
         self.specular_0.Matrix_stack()
-        self.u=self.specular_0.U
+        self.u=np.squeeze(self.specular_0.U)
         #loading parameters from the incident wave
         
     def get_q(self):
@@ -153,6 +154,8 @@ class Background_DWBA_Lee():
             self.U_FFT_arr=U_temp
             
     def fill_n_array_CC(self,Specular_Intensity,specular,specular_0,qz,index_out):
+        specular_0.chi_zero=np.squeeze(specular_0.chi_zero)
+        specular_0.chi2=np.squeeze(specular_0.chi2)
         T=np.array(specular.T_fields)
         R=np.array(specular.R_fields)
         T0=np.array(specular_0.T_fields)
@@ -250,6 +253,8 @@ class Background_DWBA_Lee():
         return n_array, n_prime_array 
     
     def fill_n_array_MM(self,Specular_Intensity,specular,specular_0,qz,index_out):
+        specular_0.chi_zero=np.squeeze(specular_0.chi_zero)
+        specular_0.chi2=np.squeeze(specular_0.chi2)
         T=np.array(specular.T_fields)
         R=np.array(specular.R_fields)
         T0=np.array(specular_0.T_fields)
@@ -349,6 +354,8 @@ class Background_DWBA_Lee():
         return n_array, n_prime_array 
     
     def fill_n_array_CM(self,Specular_Intensity,specular,specular_0,qz,index_out):
+        specular_0.chi_zero=np.squeeze(specular_0.chi_zero)
+        specular_0.chi2=np.squeeze(specular_0.chi2)
         T=np.array(specular.T_fields)
         R=np.array(specular.R_fields)
         T0=np.array(specular_0.T_fields)
@@ -466,13 +473,15 @@ class Background_DWBA_Lee():
         diffuse_charge_mag=np.zeros((len(theta_out),len(theta_out)),dtype=complex)
         
         specular_0=self.specular_0
+        specular_0.z=self.specular_0.z[1:]
         for index_out in range(1,ntheta-1):#why not from zero to ntheta??
-            specular=Stepanov_Specular(self.sample,self.theta[index_out],self.energy)
+            specular=XRMS_Simulate(self.sample,self.theta[index_out],self.energy,full_column="column")
             specular.Chi_define()
             specular.get_A_S_matrix()
-            specular.XM_define_Big()
+            specular.XM_define()
             specular.Matrix_stack()
             Specular_Intensity[index_out]=specular.I_output[0]
+            specular.z=specular.z[1:]
             if index_out==1:
                 weights=np.array([[np.exp(-np.abs(specular.z[i]-specular.z[j])/self.eta_perp) for i in range(1,len(specular.z))] for j in range(1,len(specular.z))]);
             #these weights come from the definition of C (equation 5.14)
@@ -499,7 +508,7 @@ sample2=XRMS_Sample(circular="right")
 count=0
 for angletest in range(1):
     count=count+1
-    print(count)
+    
     theta_i=13.0+angletest; #Angulo inicial para la lista de angulos
     theta_f=18.0+angletest; #Angulo final  
     theta_i=theta_i/180*np.pi
