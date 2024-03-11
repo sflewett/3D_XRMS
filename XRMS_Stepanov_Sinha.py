@@ -9,12 +9,7 @@ import numpy.ma as ma
 from operator import and_
 from scipy.interpolate import RegularGridInterpolator
 from numba import njit
-#from Sample_Class_test import XRMS_Sample
-from LSMO_sample_class import LSMO
-#import time
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-
+import finufft
 
 class XRMS_Simulate():
     def __init__(self, sample,theta,energy,full_column="full",column=[0,0]):
@@ -26,7 +21,8 @@ class XRMS_Simulate():
         self.lamda=c/f
         self.theta=theta
         self.f_charge=sample.f_Charge
-        self.f_Mag=sample.f_Mag
+        self.f_Mag=sample.f_Mag/20
+        ##WE NEED TO LOOK INTO THIS ISSUE OF THE MAGNETIC SCATTERING FACTORS!!##
         self.f_Mag2=sample.f_Mag2
         self.full_column=full_column
         self.r0=2.82e-15
@@ -127,6 +123,13 @@ class XRMS_Simulate():
         m1=np.array(M[0,...])
         m2=np.array(M[1,...])
         m3=np.array(M[2,...])
+        
+        norm=np.sqrt(m1**2+m2**2+m3**2+1e-9)
+        
+        m1=m1/norm
+        m2=m2/norm
+        m3=m3/norm
+        
         empty=np.zeros(m1.shape)
         ones=empty+1
         delta=np.array([[ones,empty,empty],
@@ -239,7 +242,14 @@ class XRMS_Simulate():
             return u
         def Unonmag(chi_zero,nx,gamma):# non magnetic case
             #Equation 6 of Stepanov Sinha
-            u1=(chi_zero+gamma**2)**0.5
+            temp=chi_zero.shape
+            temp2=chi_zero.flatten()
+            u1=(temp2+gamma**2)**0.5
+            u1=u1
+            u1_i=np.imag(u1)            
+            u1[u1_i<0]=-u1[u1_i<0]
+            u1=u1.reshape(temp)
+            
             u2=-u1
             u3=u2-u2#setting these to zero
             u4=u3
@@ -254,8 +264,19 @@ class XRMS_Simulate():
             u4=u1
             delta=chi[0,2,...]**2*(1+chi[0,0,...])
             u1=(gamma**2+chi[1,1,...])**0.5
+            temp=chi[0,2,...].shape
+            u1a=u1.flatten()
+            u1_i=np.imag(u1a)            
+            u1a[u1_i<0]=-u1a[u1_i<0]
+            u1=u1a.reshape(temp)        
+            
             u3=-u1
             u2=(gamma**2+chi[2,2,...]+delta)**0.5
+            u2a=u2.flatten()
+            u2_i=np.imag(u1a)            
+            u2a[u2_i<0]=-u2a[u1_i<0]
+            u2=u2a.reshape(temp)       
+            
             u4=-u2
             u=np.array([u1,u2,u3,u4],dtype=complex)
             
@@ -540,7 +561,7 @@ class XRMS_Simulate():
         W_list_rr=[]
         R_fields=[]
         T_fields=[]
-        tempzeros=np.array([[0],[0]])
+        tempzeros=np.array([[0.],[0.]])
         M_list_tt.append(self.Mtt[stack_coordinates[0],stack_coordinates[1],0,:,:])
         M_list_tr.append(self.Mtr[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)
         M_list_rt.append(self.Mrt[stack_coordinates[0],stack_coordinates[1],0,:,:]*roughness_reduction)#Aplicando la rugosidad solamente a las partes relacionados a la reflexión
@@ -607,13 +628,13 @@ class XRMS_Simulate():
         Pz1=self.Pz1_masked
         for j in range (4):
             for l in range(temp.shape[2]):
-                if self.mask1[0,0,j]==False:
+                if self.mask1[0,0,l]==False:
                     self.efields[l,j,0]=Px1[j,0,0,l]
                     self.efields[l,j,1]=1.
                     self.efields[l,j,2]=Pz1[j,0,0,l]
         for j in range (4):
             for l in range(temp.shape[2]):
-                if self.mask2[0,0,j]==False:
+                if self.mask2[0,0,l]==False:
                     if j%2==0:
                         self.efields[l,j,0]=0
                         self.efields[l,j,1]=1
@@ -624,13 +645,13 @@ class XRMS_Simulate():
                         self.efields[l,j,2]=np.cos(self.theta)
         for j in range (4):
             for l in range(temp.shape[2]):
-                if self.mask3[0,0,j]==False:
+                if self.mask3[0,0,l]==False:
                     if j%2==0:
                         self.efields[l,j,0]=0
                         self.efields[l,j,1]=1
                         self.efields[l,j,2]=0
                     else:
-                        self.efields[l,j,0]=Rx[j,l]*np.cos(self.theta)
+                        self.efields[l,j,0]=Rx[j,0,0,l]*np.cos(self.theta)
                         self.efields[l,j,1]=0
                         self.efields[l,j,2]=np.cos(self.theta)
         
@@ -640,9 +661,16 @@ class XRMS_Simulate():
         
         att3=att2*np.conj(att2)
         
-        att=att3.sum(axis=1)
+        att_temp=att3.sum(axis=1)/2
+        
+        
         #The reflection coefficients are to be scaled by the square of the relative field strength within the sample. We
         #scale by the square to include attenuation of both incident and reflected beams
+        
+        att=np.ones(len(att_temp)+1,dtype=complex)
+        att[1:]=att_temp.squeeze()
+        if self.sample.sim_type=="Crystal":
+            self.att_factor=att[self.sample.n_unique]/att[1]
         R_array=np.zeros(self.Mrt_matrix.shape,dtype=complex)
         for l in range(att.shape[0]-1):
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
@@ -701,7 +729,7 @@ class XRMS_Simulate():
             #to calculate the adjusted absorption
             nx=self.size_x
             ny=self.size_y
-            nz=self.sample.size_z+1
+            nz=len(self.sample.z)
             
             dx=self.sample.dx
             dz=self.sample.dz
@@ -778,137 +806,186 @@ class XRMS_Simulate():
                 return adj_abs_plus
             if in_out=="out":
                 return adj_abs_minus
-        adj_abs_plus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_in,in_out="in")
-        adj_abs_minus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_out,in_out="out")
-        adj_abs_plus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_in,in_out="in")
-        adj_abs_minus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_out,in_out="out")
-        adj_abs_plus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="in")
-        adj_abs_minus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="out")
+        self.adj_abs_plus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_in,in_out="in")
+        self.adj_abs_minus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_out,in_out="out")
+        self.adj_abs_plus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_in,in_out="in")
+        self.adj_abs_minus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_out,in_out="out")
+        self.adj_abs_plus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="in")
+        self.adj_abs_minus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="out")
         #absorption factor        
-        return adj_abs_plus_XMCD,adj_abs_minus_XMCD,adj_abs_plus_XMLD_pi,adj_abs_minus_XMLD_pi,adj_abs_plus_XMLD_trans,adj_abs_minus_XMLD_trans
         
-    def Ewald_sphere_interpolate(self,input_array, dx,dy,dz,det_pixel,detector_distance,n_det_x,n_det_y,angle_of_incidence):
-        #From a 3D reciprocal space map, extract what would appear on the detector.
-        #input_array: 3D reciprocal space map. Simply the 3D FFT of the array of reflection coefficients
-        #dx dy and dz are the pixel sizes of the 3D array or reflection coefficients
-        #det_pixel is the detector pixel size
-        #detector_distance is the sample to detector distance
-        #n_det_x and n_det_y are the detector sizes in number of pixels
-        #angle of incidence is the angle of incident light
+        
+    
+    def Ewald_sphere_pixel_index(self,input_array,sample, simulation_input):
+        #From the array of reflection coefficients, get the Ewald sphere slice
                          
+            thickness=sample.z[-1]
+            dim_x=sample.dx*input_array.shape[0]*1e-9
+            dim_y=sample.dy*input_array.shape[1]*1e-9
             nx=input_array.shape[0]
             ny=input_array.shape[1]
-            nz=input_array.shape[2]
             
-            pixel_thetax=np.arcsin(self.lamda/nx/dx)
-            pixel_thetay=np.arcsin(self.lamda/ny/dy)
-            pixel_thetaz=np.arcsin(self.lamda/nz/dz)
+            
+            lamda=self.lamda
+            pixel_thetax=np.arcsin(lamda/dim_x)#FFT output angle of each diffraction order (Fraunhofer diffraction theory)
+            pixel_thetay=np.arcsin(lamda/dim_y)
+            pixel_thetaz=np.arcsin(lamda/(2*thickness))#the factor of two is for the reflection
             #theta values corresponding to the natural fft output
             
-            pixel_qx=np.linspace(0,nx-1,nx)
-            pixel_qy=np.linspace(0,ny-1,ny)
-            pixel_qz=np.linspace(0,nz-1,nz)
             #pixel numbers of the input array
+            if sample.sim_type=="Crystal":
+                UC_per_mm_cell=np.int64(sample.dz*1e-9/sample.unit_cell)
+                temp=(simulation_input['3D_Sample_Parameters']["shape"][2]-1)/(simulation_input['3D_Sample_Parameters']["shape"][2])*(1/(2*UC_per_mm_cell*(simulation_input['3D_Sample_Parameters']["shape"][2]))+1)    
+                points_z_fft=self.z[1:]/(self.z[-1]-self.z[1])*2*np.pi*temp-np.pi
+            if sample.sim_type=="Multilayer":
+                points_z_fft=self.z[1:]/(self.z[-1]-self.z[1])*2*np.pi-np.pi
+            points_x_fft=np.linspace(-np.pi,np.pi-2*np.pi/nx,nx)
+            points_y_fft=np.linspace(-np.pi,np.pi-2*np.pi/ny,ny)
             
+            xv, yv, zv = np.meshgrid(points_x_fft, points_y_fft, points_z_fft, indexing='ij')
+            #scaling the z positions for the non uniform fft. The effective array size in z is set as the 
+            #thickness of the sample
+            delta_qz=2*np.pi/thickness
             
-            delta_qz=4*np.pi/nz/dz
-            qz_origin=2*np.pi/self.lamda*np.sin(angle_of_incidence)
+            #q spacing of a pixel in the FT output
+            qz_origin=2*np.pi/lamda*np.sin(self.theta)
             #centre of the Ewald sphere in terms of qz        
-            qz_scatter_pixel=nz/2-2*qz_origin/delta_qz
+            qz_scatter_pixel=-2*qz_origin/delta_qz
             #pixel value in z of the centre of the scattered light            
+            det_pixel=simulation_input['Simulation_Parameters']['det_dx']
+            detector_distance=simulation_input['Simulation_Parameters']["det_sample_distance"]
+            n_det_x=simulation_input['Simulation_Parameters']['det_size'][0]
+            n_det_y=simulation_input['Simulation_Parameters']['det_size'][1]
+            order_x=simulation_input['Simulation_Parameters']['orders_x']
+            order_y=simulation_input['Simulation_Parameters']['orders_y']
             
-            detector_y=np.linspace(-n_det_y/2-1,n_det_y/2,n_det_y)*det_pixel
-            detector_xz=np.linspace(-n_det_x/2-1,n_det_x/2,n_det_x)*det_pixel
+            detector_pixel_angle=np.arctan(det_pixel/detector_distance)
+            #the physical angle represented by each detector pixel
+            detpixels_per_fourier_pixel_y=pixel_thetay/detector_pixel_angle
+            detpixels_per_fourier_pixel_x=pixel_thetax/detector_pixel_angle
+            #the number of detector pixels per diffraction order. This does not yet include the 
+            #factor of 1/cos(theta)
             
-            detector_angle_y=np.arctan(detector_y/detector_distance)
+            if n_det_y%2==0:
+                detector_y=np.linspace(-n_det_y/2,n_det_y/2-1,n_det_y)*det_pixel
+            else:
+                detector_y=np.linspace(-(n_det_y-1)/2,(n_det_y-1)/2,n_det_y)*det_pixel
+            if n_det_x%2==0:
+                detector_xz=np.linspace(-n_det_x/2,n_det_x/2-1,n_det_x)*det_pixel
+            else:
+                detector_xz=np.linspace(-(n_det_x-1)/2,(n_det_x-1)/2,n_det_x)*det_pixel
+            
+            detector_angle_y=np.arctan(detector_y/detector_distance)#angle of each detector pixel
             detector_angle_xz=np.arctan(detector_xz/detector_distance)
             #detector angles for each detector pixel            
             
-            detector_pixel_y=detector_angle_y/pixel_thetay+ny/2  
-            detector_pixel_x=detector_angle_xz/pixel_thetax*np.sin(angle_of_incidence)+nx/2           
-            detector_pixel_z=detector_angle_xz/pixel_thetaz*np.cos(angle_of_incidence)+qz_scatter_pixel
+            detector_pixel_y=detector_angle_y/pixel_thetay
+            detector_pixel_x=detector_angle_xz/pixel_thetax*np.sin(self.theta)         
+            detector_pixel_z=detector_angle_xz/pixel_thetaz*np.cos(self.theta)+qz_scatter_pixel
             
             ones_y=np.ones(n_det_y)
             ones_xz=np.ones(n_det_x)
-            
             det_x=np.transpose(np.outer(ones_y,detector_pixel_x))
             det_y=np.outer(ones_xz,detector_pixel_y)
             det_z=np.transpose(np.outer(ones_y,detector_pixel_z))
+            s=np.ndarray.flatten(det_x)
+            t=np.ndarray.flatten(det_y)
+            u=np.ndarray.flatten(det_z)
+            if simulation_input['Simulation_Parameters']['periodic_input']==True:
+                
+                detector_pixel_y=np.linspace(-order_y,order_y,2*order_y+1)
+                detector_pixel_x=np.linspace(-order_x,order_x,2*order_x+1)
+                
+                delta_qx_physical=4*np.pi/dim_x
+                qz_physical=2*np.pi/lamda*np.sin(np.arccos((2*np.pi/lamda*np.cos(self.theta)+np.linspace(-order_x,order_x,2*order_x+1)*delta_qx_physical)/(2*np.pi/lamda)))+qz_origin
+                qz_pixel=qz_physical/delta_qz
+                qz_pixel[np.isnan(qz_physical)==True]=qz_pixel[np.int64(0.5*(len(qz_pixel)-1))]
+                qx_physical=(qz_physical-qz_origin*2)*np.tan(self.theta)
+                
+                detector_pixel_x[np.isnan(qz_physical)==True]=0
+                ones_y=np.ones(2*order_y+1)
+                ones_xz=np.ones(len(qz_pixel))
+                det_x=np.transpose(np.outer(ones_y,detector_pixel_x))
+                det_y=np.outer(ones_xz,detector_pixel_y)
+                det_z=np.transpose(np.outer(ones_y,qz_pixel))
+                
+                qy_pixel=detector_pixel_y
+                order_pixels_y=np.round((qy_pixel-qy_pixel[len(qy_pixel)//2])*detpixels_per_fourier_pixel_y+(n_det_y)/2)
+                order_pixels_xz=np.round(-qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_x+n_det_x/2)
+                s=np.ndarray.flatten(det_x)
+                t=np.ndarray.flatten(det_y)
+                u=np.ndarray.flatten(det_z)
+                output_full1=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
+                output_full2=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
+            ##setup the fft plan
             
-            interp = RegularGridInterpolator((pixel_qx, pixel_qy, pixel_qz),input_array)
-            pts=np.array([det_x,det_y,det_z])
-            permutation=(1,2,0)
-            pts=np.transpose(pts,permutation)
+            n_modes=3
+            nufft_type=3
+            plan = finufft.Plan(nufft_type, n_modes)
+            x=input_array
             
-            return interp(pts)
-        
-    
-        
-    def export_intensity(self,Incident,R,det_pixel=13.5e-6*4,det_distance=0.25,det_size=[256,256]):
-        #default 1024x1024 detector with 13.5 um pixels, used with 4x4 binning at a 25cm distance
-        #calculates the scattered intensity for a set of reflection coefficients R, and an incident polarization "Incident", where incident is a list
-        #of two complex numbers
-        In=Incident
-        Fourier3D=np.fft.fftshift(np.fft.fftn(np.fft.fftshift(R,axes=(0, 1,2)), axes=(0, 1,2)),axes=(0,1,2))
-        Intensity3D=(In[0]*Fourier3D[:,:,:,0,0]+In[1]*Fourier3D[:,:,:,0,1])*np.conj(In[0]*Fourier3D[:,:,:,0,0]+In[1]*Fourier3D[:,:,:,0,1])+\
-        (In[0]*Fourier3D[:,:,:,1,0]+In[1]*Fourier3D[:,:,:,1,1])*np.conj(In[0]*Fourier3D[:,:,:,1,0]+In[1]*Fourier3D[:,:,:,1,1])
-        output=self.Ewald_sphere_interpolate(Intensity3D, self.sample.dx,self.sample.dx,self.sample.unit_cell/2,det_pixel,det_distance,det_size[0],det_size[1],self.theta)
-        
-        return np.abs(output)
-        
-if __name__=="__main__":
-    full_column="full"
-    #set "full" to run the 3D code, and set "column" to run the 1D code
-    n_angles=11
-    angle_start=20
-    angle_end=30
-    if full_column=="full":
-        output_array=np.zeros((256,256,n_angles))
-        output_array_conj=output_array.copy()
-        #pre_assigning arrays for the output
-        fig,ax = plt.subplots(1,1)
-        
-        #fig.suptitle('XRMS output')
-        plt.ylabel("pixel_long")
-        plt.xlabel("pixel_trans")
-    angles=np.linspace(angle_start,angle_end,n_angles)
-    #angles in degress at which the code is evaluated
-    differential_absorption=False
-    
-    for count,theta_deg in enumerate(angles):
-        print(theta_deg)
-        sample=LSMO(full_column)
-        #read in the sample class
-        Incident=sample.Incident
-        Incident2=np.array([[complex(1,0)],[complex(0,-1)]])
-        theta=theta_deg*np.pi/180       
-        XRMS=XRMS_Simulate(sample,theta,energy=640,full_column=full_column)
-        XRMS.Chi_define()
-        XRMS.get_A_S_matrix()
-        XRMS.XM_define()
-        XRMS.Matrix_stack()
-        if full_column=="full":
-            XRMS.get_R()
-            if differential_absorption==True:
-                adj_abs_plus_XMCD,adj_abs_minus_XMCD,adj_abs_plus_XMLD_pi,adj_abs_minus_XMLD_pi,adj_abs_plus_XMLD_trans,adj_abs_minus_XMLD_trans=XRMS.get_Faraday_Parallel()
-            sample.interpolate_nearest_neighbour(XRMS.R_array)
-        
-            output_array[:,:,count]=XRMS.export_intensity(Incident,XRMS.R_array)
-            output_array_conj[:,:,count]=XRMS.export_intensity(Incident2,XRMS.R_array)
-    if full_column=="full":        
-        def update(j):
-            theta_deg=angles
-            diffraction=output_array[:,:,j]-output_array_conj[:,:,j]
             
-            #axs[0].plot(np.sum(diffraction[80:120,80:120],axis=0)) 
+            self.output=np.zeros((det_z.shape[0],det_z.shape[1],2,2),dtype=complex)
             
-            im=(np.real(diffraction))
-            plt.title(f'XRMS output_{theta_deg[j]}')
-            plt.imshow(im)
-        ani = animation.FuncAnimation(fig,update,frames=len(angles), interval=200, blit=False,repeat_delay=1000)
-        ani.save("XRMS_precise.gif")
-
-
-
-
-         
+            if sample.sim_type=="Crystal":
+                
+                kernel=np.ones(UC_per_mm_cell,dtype=complex)
+                for j in range(UC_per_mm_cell):
+                    kernel[j]=self.att_factor**(j/UC_per_mm_cell)
+                
+                points_z_kernel=np.linspace(0,UC_per_mm_cell-1,UC_per_mm_cell)/UC_per_mm_cell*(2*np.pi/simulation_input['3D_Sample_Parameters']["shape"][2])
+                points_x_kernel=np.zeros(UC_per_mm_cell)
+                points_y_kernel=np.zeros(UC_per_mm_cell)
+                
+                plan.setpts(points_x_kernel, points_y_kernel, points_z_kernel, s, t, u)
+                f_kernel = plan.execute(kernel)
+            plan.setpts(np.ndarray.flatten(xv), np.ndarray.flatten(yv), np.ndarray.flatten(zv), s, t, u)
+            
+                           
+                #applies periodic boundary conditions, expanding a Fourier output to 3X the area
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==False:
+                
+                for j in range(2):
+                    for k in range(2):
+                        f = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]))
+                        
+                        if sample.sim_type!="Crystal":
+                            self.output[:,:,j,k]= np.reshape(f,(self.output.shape[0],self.output.shape[1])) 
+                        if sample.sim_type=="Crystal":
+                            self.output[:,:,j,k]= np.reshape(f*f_kernel,(self.output.shape[0],self.output.shape[1]))
+                        
+                if simulation_input['Simulation_Parameters']['periodic_input']==True:
+                    for j in range(order_x*2+1):
+                        for k in range(order_y*2+1):
+                            if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
+                                output_full1[int(order_pixels_xz[j]),int(order_pixels_y[k]),:,:]=self.output[j,k,:,:]
+                                
+                    self.output=output_full1
+                    
+                return self.output,self.output  
+            
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                self.output1=self.output
+                self.output2=self.output
+                
+                for j in range(2):
+                    for k in range(2):
+                        f1 = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]*(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:])))
+                        f2 = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]/(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:])))
+                        
+                        if sample.sim_type!="Crystal":
+                            self.output1[:,:,j,k]= np.reshape(f1,(n_det_x,n_det_y))
+                            self.output2[:,:,j,k]= np.reshape(f2,(n_det_x,n_det_y))
+                        if sample.sim_type=="Crystal":
+                            self.output1[:,:,j,k]= np.reshape(f1*f_kernel,(self.output.shape[0],self.output.shape[1]))
+                            self.output2[:,:,j,k]= np.reshape(f2*f_kernel,(self.output.shape[0],self.output.shape[1]))
+                if simulation_input['Simulation_Parameters']['periodic_input']==True:
+                    for j in range(order_x*2+1):
+                        for k in range(order_y*2+1):
+                            if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
+                                output_full1[order_pixels_xz[j],order_pixels_y[k],:,:]=self.output1[j,k,:,:]
+                                output_full2[order_pixels_xz[j],order_pixels_y[k],:,:]=self.output2[j,k,:,:]
+                    self.output1=output_full1   
+                    self.output2=output_full2
+                    
+                return self.output1,self.output2 

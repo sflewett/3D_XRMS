@@ -9,15 +9,27 @@ from XRMS_Stepanov_Sinha import XRMS_Simulate
 from LSMO_sample_class import LSMO
 from Sample_Class_test import XRMS_Sample
 import matplotlib.pyplot as plt
+import XRMS_Simulation_Load
 
 class Background_DWBA_Lee():
-    def __init__(self, sample,theta,energy):
+    def __init__(self, sample,simulation_input,theta_0):
         #here, the input is a range of exit angles, with the incidence angle assumed to be the median value of the input
         c=3e8
+        energy=simulation_input['Simulation_Parameters']["energy"]
         f=energy*1.6e-19/6.626e-34
         self.lamda=c/f
-        self.theta=theta
-        self.theta_0=np.median(theta)
+        self.theta_0=theta_0
+        
+        det_pixel=simulation_input['Simulation_Parameters']['det_dx']
+        detector_distance=simulation_input['Simulation_Parameters']["det_sample_distance"]
+        n_det_x=simulation_input['Simulation_Parameters']['det_size'][0]
+               
+        if n_det_x%2==0:
+            detector_xz=np.linspace(-n_det_x/2,n_det_x/2-1,n_det_x)*det_pixel
+        else:
+            detector_xz=np.linspace(-(n_det_x-1)/2,(n_det_x-1)/2,n_det_x)*det_pixel
+        
+        self.theta=np.arctan(detector_xz/detector_distance)+self.theta_0
         specular_list=[]
         self.energy=energy
         self.delta_theta=self.theta-self.theta_0
@@ -121,7 +133,7 @@ class Background_DWBA_Lee():
         if output==True:
             return C
     
-    def U_FFT(self,full_simple='simple'):
+    def U_FFT(self,full_simple='full'):
         qz=self.qz
         qx=self.qx
         dim=qx.shape
@@ -130,14 +142,14 @@ class Background_DWBA_Lee():
         n=dim[1]
         delta_r=1/n/delta_qx
         if n%2==0:
-            self.x = np.meshgrid(np.linspace(-n/2,n/2-1, n),np.linspace(-n/2,n/2-1, n))[0]
-            self.y = np.meshgrid(np.linspace(-n/2,n/2-1, n),np.linspace(-n/2,n/2-1, n))[1]
-            self.R = np.sqrt(self.y**2+self.x**2)*delta_r
+            self.x = np.meshgrid(np.linspace(-n/2,n/2-1, n),np.linspace(-n/2,n/2-1, n))[1]
+            self.y = np.meshgrid(np.linspace(-n/2,n/2-1, n),np.linspace(-n/2,n/2-1, n))[0]
+            self.R = np.sqrt((self.y*delta_r*np.sin(self.theta_0))**2+(self.x*delta_r)**2)
         if n%2==1:
             n2=n-1
-            self.x = np.meshgrid(np.linspace(-n2/2,n2/2, n),np.linspace(-n2/2,n2/2, n))[0]
-            self.y = np.meshgrid(np.linspace(-n2/2,n2/2, n),np.linspace(-n2/2,n2/2, n))[1]
-            self.R = np.sqrt(self.y**2+self.x**2)*delta_r
+            self.x = np.meshgrid(np.linspace(-n2/2,n2/2, n),np.linspace(-n2/2,n2/2, n))[1]
+            self.y = np.meshgrid(np.linspace(-n2/2,n2/2, n),np.linspace(-n2/2,n2/2, n))[0]
+            self.R = np.sqrt((self.y*delta_r*np.sin(self.theta_0))**2+(self.x*delta_r)**2)
         C=self.C_define()
         if n%2==0:
             qz_fixed=qz[1,0,round(n/2),0,0]
@@ -154,6 +166,7 @@ class Background_DWBA_Lee():
             self.U_FFT_arr=U_temp
             
     def fill_n_array_CC(self,Specular_Intensity,specular,specular_0,qz,index_out):
+        #This and the following two methods are dedicated to filling the 3 lines of equation 5.12
         specular_0.chi_zero=np.squeeze(specular_0.chi_zero)
         specular_0.chi2=np.squeeze(specular_0.chi2)
         T=np.array(specular.T_fields)
@@ -454,10 +467,10 @@ class Background_DWBA_Lee():
         return n_array, n_prime_array 
         
     def BigSum(self):
-        #evaluating equation 5.11 of the paper
+        #evaluating equation 5.11 of the paper which is computed via equation 5.12, and calls the 3 previous methods
         theta_in=self.theta_0
         theta_out=self.theta
-        self.U_FFT(full_simple='simple')
+        self.U_FFT(full_simple='full')
         
         ntheta=len(self.theta)
         theta_i=min(self.theta)
@@ -466,7 +479,7 @@ class Background_DWBA_Lee():
          
         qz=self.qz
         qx=self.qx
-        Specular_Intensity=np.zeros((len(theta)))
+        Specular_Intensity=np.zeros((len(self.theta)))
         #also outputting the specular intensity
         diffuse_charge=np.zeros((len(theta_out),len(theta_out)),dtype=complex)
         diffuse_mag=np.zeros((len(theta_out),len(theta_out)),dtype=complex)
@@ -475,6 +488,7 @@ class Background_DWBA_Lee():
         specular_0=self.specular_0
         specular_0.z=self.specular_0.z[1:]
         for index_out in range(1,ntheta-1):#why not from zero to ntheta??
+            print(index_out)
             specular=XRMS_Simulate(self.sample,self.theta[index_out],self.energy,full_column="column")
             specular.Chi_define()
             specular.get_A_S_matrix()
@@ -502,47 +516,24 @@ class Background_DWBA_Lee():
         #Including the final two magnetic terms in the background calculation is still pending
         #however these factors are of a substantially lesser magnitude compared with the charge scattering
         #calulated here
+
+def background_main(simulation_input,theta):
         
-sample1=XRMS_Sample(circular="left")
-sample2=XRMS_Sample(circular="right")
-count=0
-for angletest in range(1):
+    sample1=XRMS_Simulation_Load.Generic_sample(simulation_input,incident_beam_index=0)
+    sample2=XRMS_Simulation_Load.Generic_sample(simulation_input,incident_beam_index=1)
+    count=0
+    
     count=count+1
     
-    theta_i=13.0+angletest; #Angulo inicial para la lista de angulos
-    theta_f=18.0+angletest; #Angulo final  
-    theta_i=theta_i/180*np.pi
-    theta_f=theta_f/180*np.pi
-    ntheta=500
-    theta=np.linspace(theta_i,theta_f,ntheta)        
-    bkg1=Background_DWBA_Lee(sample1,theta,energy=780)
-    bkg2=Background_DWBA_Lee(sample2,theta,energy=780)
+    bkg1=Background_DWBA_Lee(sample1,simulation_input,theta)
+    bkg2=Background_DWBA_Lee(sample2,simulation_input,theta)
     bkg1.get_q()
     bkg1.U_FFT()
     bkg1.BigSum()
     bkg2.get_q()
     bkg2.U_FFT()
     bkg2.BigSum()
-    plt.figure()
-    #plt.plot(theta[1:],np.log(np.abs(bkg.diffuse_background[1:])))
-    plt.imshow(np.log(np.real(bkg1.diffuse_background[1:,1:])))
-    test=np.zeros((500,500))
-
-    test[250,250]=1
-
-    test[250,200]=0.05
-
-    test[250,300]=0.02
-    background=bkg1.diffuse_background
-    test2=np.fft.ifftshift(np.fft.ifft2(np.fft.fftshift(np.fft.fft2(test)*np.fft.fft2(background))))
-    test2=np.abs(test2)
-    test2[235:265,235:265]=test2[10,10]
     
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    plt.xlabel("transverse deviation (deg)")
-    plt.ylabel("longitudinal/polar deviation (deg)")
-    image = np.transpose(np.log(test2[1:-1,1:-1]))
-    i = ax.imshow(image, interpolation='nearest',
-              extent=[0., 5., 0., 5])
+    
+    return bkg1,bkg2
     
