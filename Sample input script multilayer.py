@@ -76,7 +76,7 @@ prop_sim["energy"]=780#incident photon energies in eV
 prop_sim["angles"]=np.linspace(1,51,201)#incident angles in degrees
 prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex(1,0)],[complex(0,-1)]])]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
-prop_sim["differential_absorption"]=False
+prop_sim["differential_absorption"]=True
 #where a field has been applied paralell to the incoming x-rays, then 
 #this should be set as true. This is also the case with zero field, but a 
 #history of an in-plane field which could be expected to cause aligned Bloch

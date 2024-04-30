@@ -81,8 +81,6 @@ prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex
 #in this example setting we calculate for both left and right circular light
 prop_sim["differential_absorption"]=True
 prop_sim["matrix_stack_coordinates"]=[0,32]
-
-
 #where a field has been applied paralell to the incoming x-rays, then 
 #this should be set as true. This is also the case with zero field, but a 
 #history of an in-plane field which could be expected to cause aligned Bloch
@@ -90,8 +88,7 @@ prop_sim["matrix_stack_coordinates"]=[0,32]
 #these differential transmission effects are observed, are expected to be present, and are of importance
 #for the study at hand 
 prop_sim["extra_absorption"]=10
-#correction factor for the fact taht the charge scattering values come from the Henke tables which makes them a massive
-#underestimate of real values
+#this is a correction for the Henke tables being used
 
 prop_sim["calculate_background"]=False
 #when set to True, this calculates the diffuse background scatter, and is especially important when working with
