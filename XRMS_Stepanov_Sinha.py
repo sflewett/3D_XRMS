@@ -9,7 +9,6 @@ import numpy.ma as ma
 from operator import and_
 from scipy.interpolate import RegularGridInterpolator
 from numba import njit
-import finufft
 
 class XRMS_Simulate():
     def __init__(self, sample,theta,energy,full_column="full",column=[0,0]):
@@ -21,6 +20,7 @@ class XRMS_Simulate():
         self.lamda=c/f
         self.theta=theta
         self.f_charge=sample.f_Charge
+        self.f_charge_maglayer_scalar=sample.f_Charge_maglayer_scalar
         self.f_Mag=sample.f_Mag/20
         ##WE NEED TO LOOK INTO THIS ISSUE OF THE MAGNETIC SCATTERING FACTORS!!##
         self.f_Mag2=sample.f_Mag2
@@ -202,7 +202,7 @@ class XRMS_Simulate():
             chi[0,1,...]*chi[1,0,...]*(gamma**2+chi[2,2,...])- chi[0,2,...]*chi[2,0,...]*(gamma**2+chi[1,1,...])+\
             chi[0,1,...]*chi[1,2,...]*chi[2,0,...]+chi[1,0,...]*chi[2,1,...]*chi[0,2,...]
             
-            output_arrays=np.array([u1,u2,u3,u4],dtype=np.complex128)                    
+            output_arrays=np.array([u1,u2,u3,u4],dtype=np.complex128) 
             u1,u2,u3,u4=Uloop(self.M_tot,Q1,Q2,Q3,Q4,Q5,output_arrays)
             u=np.array([u1,u2,u3,u4],dtype=complex)
             #here we literally copy from equations 25-30 of Stepanov Sinha
@@ -324,7 +324,7 @@ class XRMS_Simulate():
                       [zeros,zeros,zeros,np.exp(-complex(0,1)*u[1,...]*2*np.pi/self.lamda*self.d)]]
                  
              P_dims=[4]+list(M_tot.shape) 
-             Px=np.zeros((P_dims))
+             Px=np.zeros((P_dims),dtype=complex)
              Pz=Px
              #for the non-magnetic case, the eigenvectors, whose x and z components are labelled Px and Pz
              #do not have a meaning expressed in terms of Py, as is the case for the magnetic case
@@ -454,7 +454,7 @@ class XRMS_Simulate():
              Px1=self.Px1_masked
              Rx=self.Rx_masked
              Pz1=self.Pz1_masked
-             
+             u=self.U
              Basischange_Mask1=self.mask_expand(self.mask1,[2,2],before_after="after")
              Basischange_Mask2=self.mask_expand(self.mask2,[2,2],before_after="after")
              Basischange_Mask3=self.mask_expand(self.mask3,[2,2],before_after="after")
@@ -469,13 +469,13 @@ class XRMS_Simulate():
              zeros=ones-ones
              Basischange1a[...,0,0]=ones
              Basischange1a[...,0,1]=ones
-             Basischange1a[...,1,0]=-Px1.data[0,...]*np.sin(theta)+Pz1.data[0,...]*np.cos(theta)
-             Basischange1a[...,1,1]=-Px1.data[1,...]*np.sin(theta)+Pz1.data[1,...]*np.cos(theta)
+             Basischange1a[...,1,0]=Px1.data[0,...]*u[0,...]-Pz1.data[0,...]*np.cos(theta)
+             Basischange1a[...,1,1]=Px1.data[1,...]*u[1,...]-Pz1.data[1,...]*np.cos(theta)
              #to change from the basis of the incoming light to the eigenbasis of the layer
              Basischange1b[...,0,0]=ones
              Basischange1b[...,0,1]=ones
-             Basischange1b[...,1,0]=Px1.data[2,...]*np.sin(theta)+Pz1.data[2,...]*np.cos(theta)
-             Basischange1b[...,1,1]=Px1.data[3,...]*np.sin(theta)+Pz1.data[3,...]*np.cos(theta)
+             Basischange1b[...,1,0]=Px1.data[2,...]*u[2,...]-Pz1.data[2,...]*np.cos(theta)
+             Basischange1b[...,1,1]=Px1.data[3,...]*u[3,...]-Pz1.data[3,...]*np.cos(theta)
              #to change from the eigenbasis of the layer to the eigenbasis of the outgoing light
              #these matrices are defined in equation 8 of the new paper
              Basischange1a=ma.masked_array(Basischange1a,Basischange_Mask1)
@@ -497,12 +497,12 @@ class XRMS_Simulate():
              Basischange3a[...,0,0]=ones
              Basischange3a[...,0,1]=zeros
              Basischange3a[...,1,0]=zeros
-             Basischange3a[...,1,1]=Rx.data[1,...]*np.sin(theta)*np.cos(theta)+(np.cos(theta))**2
+             Basischange3a[...,1,1]=Rx.data[1,...]*u[1,...]*np.cos(theta)+(np.cos(theta))**2
              #to change from the basis of the incoming light to the eigenbasis of the layer
              Basischange3b[...,0,0]=ones
              Basischange3b[...,0,1]=zeros
              Basischange3b[...,1,0]=zeros
-             Basischange3b[...,1,1]=Rx.data[3,...]*np.sin(theta)*np.cos(theta)+(np.cos(theta))**2
+             Basischange3b[...,1,1]=Rx.data[3,...]*u[3,...]*np.cos(theta)+(np.cos(theta))**2
              
              Basischange3a=ma.masked_array(Basischange3a,Basischange_Mask3)
              Basischange3b=ma.masked_array(Basischange3b,Basischange_Mask3)
@@ -657,20 +657,33 @@ class XRMS_Simulate():
         
         #outputting the fields in the sigma-pi basis 
     def get_R(self):
-        att2=self.T_fields_linear
+        sample=self.sample
+        na=sample.na
         
+        r0=self.r0
+        att2=self.T_fields_linear
+        lamda=self.lamda
         att3=att2*np.conj(att2)
         
         att_temp=att3.sum(axis=1)/2
         
-        
+        if sample.sim_type=="Crystal":
+            multiplier=lamda**2*r0/np.pi
+            f_bulk=sample.f_bulk*sample.extra_absorption
+            chi_zero=na[0,0,:]*multiplier*f_bulk
+            u_bulk=(chi_zero+np.sin(self.theta)**2)**0.5
+            att2=np.exp(-complex(0,1)*u_bulk*2*np.pi/self.lamda*self.z)
+            att_temp=att2*np.conj(att2)
         #The reflection coefficients are to be scaled by the square of the relative field strength within the sample. We
-        #scale by the square to include attenuation of both incident and reflected beams
+        #scale by the square to include attenuation of both incident and reflected beams. In the crystal case, we approximate
+        #the attenuation via a scalar model to avoid artificial Bragg enhancement from the micromagnetic simulation lattice
         
-        att=np.ones(len(att_temp)+1,dtype=complex)
-        att[1:]=att_temp.squeeze()
+        if sample.sim_type=="Multilayer":
+            att=np.ones(len(att_temp)+1,dtype=complex)
+            att[1:]=att_temp.squeeze()
         if self.sample.sim_type=="Crystal":
-            self.att_factor=att[self.sample.n_unique]/att[1]
+            att=att_temp[1:]
+            self.att_factor=att[2*self.sample.n_unique]/att[self.sample.n_unique]
         R_array=np.zeros(self.Mrt_matrix.shape,dtype=complex)
         for l in range(att.shape[0]-1):
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
@@ -695,9 +708,9 @@ class XRMS_Simulate():
         #we use a simplified formula to calculate u as defined in equation 6
         #of Stepanov Sinha
         lamda=self.lamda
-        f_charge=self.f_charge
-        f_Mag=self.f_Mag
-        f_Mag2=self.f_Mag2
+        f_charge=self.f_charge_maglayer_scalar
+        f_Mag=np.max(self.f_Mag)
+        f_Mag2=np.max(self.f_Mag2)
         r0=self.r0
         na=self.na
                
@@ -743,8 +756,8 @@ class XRMS_Simulate():
             interp_plus=np.zeros((len(x),len(y),len(z)),dtype=complex)
             interp_minus=np.zeros((len(x),len(y),len(z)),dtype=complex)
             for k in range(len(z)):
-                x_shifted_plus=(x+z[k]*ratio/np.tan(theta))%nx
-                x_shifted_minus=(x-z[k]*ratio/np.tan(theta))%nx
+                x_shifted_plus=(x+z[k]*ratio/np.tan(theta))%(nx-1)
+                x_shifted_minus=(x-z[k]*ratio/np.tan(theta))%(nx-1)
                 #we can caluculate the projected magnetization through the sample by shifting each plane in the multilayer sample along the longitudinal
                 #direction
                 pts_plus=[]
@@ -755,12 +768,14 @@ class XRMS_Simulate():
                         point_minus=[x_shifted_minus[i],y[j]]
                         pts_plus.append(point_plus)
                         pts_minus.append(point_minus)
+                average_mx=np.sum(M[:,:,k])/(M.shape[0]*M.shape[1])
+                average_mx2=np.sum(M[:,:,k]**2)/(M.shape[0]*M.shape[1])
                 if XMCD_XMLD=="XMCD":
-                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=0)
-                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=0) 
+                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=average_mx)
+                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k],bounds_error=False, fill_value=average_mx) 
                 if XMCD_XMLD=="XMLD":
-                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=0)
-                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=0) 
+                    temp_plus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=average_mx2)
+                    temp_minus = RegularGridInterpolator((x, y), M[:,:,k]**2,bounds_error=False, fill_value=average_mx2) 
                 a=np.reshape(np.array(temp_plus(pts_plus)),(len(x),len(y)))
                 b=np.reshape(np.array(temp_minus(pts_minus)),(len(x),len(y)))
                 interp_plus[:,:,k]=a
@@ -815,11 +830,12 @@ class XRMS_Simulate():
         #absorption factor        
         
         
-    
     def Ewald_sphere_pixel_index(self,input_array,sample, simulation_input):
         #From the array of reflection coefficients, get the Ewald sphere slice
-                         
-            thickness=sample.z[-1]
+            if "total_thickness" not in simulation_input['3D_Sample_Parameters'].keys():          
+                thickness=sample.z[-1]
+            else:
+                thickness=simulation_input['3D_Sample_Parameters']["total_thickness"]
             dim_x=sample.dx*input_array.shape[0]*1e-9
             dim_y=sample.dy*input_array.shape[1]*1e-9
             nx=input_array.shape[0]
@@ -850,7 +866,7 @@ class XRMS_Simulate():
             #q spacing of a pixel in the FT output
             qz_origin=2*np.pi/lamda*np.sin(self.theta)
             #centre of the Ewald sphere in terms of qz        
-            qz_scatter_pixel=-2*qz_origin/delta_qz
+            qz_scatter_pixel=2*qz_origin/delta_qz
             #pixel value in z of the centre of the scattered light            
             det_pixel=simulation_input['Simulation_Parameters']['det_dx']
             detector_distance=simulation_input['Simulation_Parameters']["det_sample_distance"]
@@ -885,107 +901,129 @@ class XRMS_Simulate():
             
             ones_y=np.ones(n_det_y)
             ones_xz=np.ones(n_det_x)
-            det_x=np.transpose(np.outer(ones_y,detector_pixel_x))
-            det_y=np.outer(ones_xz,detector_pixel_y)
             det_z=np.transpose(np.outer(ones_y,detector_pixel_z))
-            s=np.ndarray.flatten(det_x)
-            t=np.ndarray.flatten(det_y)
-            u=np.ndarray.flatten(det_z)
-            if simulation_input['Simulation_Parameters']['periodic_input']==True:
-                
-                detector_pixel_y=np.linspace(-order_y,order_y,2*order_y+1)
-                detector_pixel_x=np.linspace(-order_x,order_x,2*order_x+1)
-                
-                delta_qx_physical=4*np.pi/dim_x
-                qz_physical=2*np.pi/lamda*np.sin(np.arccos((2*np.pi/lamda*np.cos(self.theta)+np.linspace(-order_x,order_x,2*order_x+1)*delta_qx_physical)/(2*np.pi/lamda)))+qz_origin
-                qz_pixel=qz_physical/delta_qz
-                qz_pixel[np.isnan(qz_physical)==True]=qz_pixel[np.int64(0.5*(len(qz_pixel)-1))]
-                qx_physical=(qz_physical-qz_origin*2)*np.tan(self.theta)
-                
-                detector_pixel_x[np.isnan(qz_physical)==True]=0
-                ones_y=np.ones(2*order_y+1)
-                ones_xz=np.ones(len(qz_pixel))
-                det_x=np.transpose(np.outer(ones_y,detector_pixel_x))
-                det_y=np.outer(ones_xz,detector_pixel_y)
-                det_z=np.transpose(np.outer(ones_y,qz_pixel))
-                
-                qy_pixel=detector_pixel_y
-                order_pixels_y=np.round((qy_pixel-qy_pixel[len(qy_pixel)//2])*detpixels_per_fourier_pixel_y+(n_det_y)/2)
-                order_pixels_xz=np.round(-qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_x+n_det_x/2)
-                s=np.ndarray.flatten(det_x)
-                t=np.ndarray.flatten(det_y)
-                u=np.ndarray.flatten(det_z)
-                output_full1=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
-                output_full2=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
-            ##setup the fft plan
             
-            n_modes=3
-            nufft_type=3
-            plan = finufft.Plan(nufft_type, n_modes)
-            x=input_array
+            detector_pixel_y=np.linspace(-order_y,order_y,2*order_y+1)
+            detector_pixel_x=np.linspace(-order_x,order_x,2*order_x+1)
             
+            delta_qx_physical=4*np.pi/dim_x
+            qz_physical=2*np.pi/lamda*np.sin(np.arccos((2*np.pi/lamda*np.cos(self.theta)+np.linspace(-order_x,order_x,2*order_x+1)*delta_qx_physical)/(2*np.pi/lamda)))+qz_origin
+            qz_pixel=qz_physical/delta_qz
+            qz_pixel[np.isnan(qz_physical)==True]=qz_pixel[np.int64(0.5*(len(qz_pixel)-1))]
+            qx_physical=(qz_physical-qz_origin*2)*np.tan(self.theta)
             
-            self.output=np.zeros((det_z.shape[0],det_z.shape[1],2,2),dtype=complex)
+            detector_pixel_x[np.isnan(qz_physical)==True]=0
+            ones_y=np.ones(2*order_y+1)
+            det_z=np.transpose(np.outer(ones_y,qz_pixel))
+            
+            qy_pixel=detector_pixel_y
+            order_pixels_y=np.round((qy_pixel-qy_pixel[len(qy_pixel)//2])*detpixels_per_fourier_pixel_y+(n_det_y)/2)
+            order_pixels_xz=np.round(-qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_x+n_det_x/2)
+            
+            array_x, array_y,array_z=np.meshgrid(detector_pixel_x,  detector_pixel_y,self.z/thickness,indexing='ij')
+            qz_pixel_array=np.zeros((2*order_x+1,2*order_y+1))
+            for j in range(2*order_x+1):
+                qz_pixel_array[j,:]=np.ones(2*order_y+1)*qz_pixel[j]
+                
+            R_FFT2D=np.fft.fftshift(np.fft.fftn(input_array,axes=[0,1]),axes=[0,1])
+            ROI=R_FFT2D[nx//2-order_x:nx//2+order_x+1,ny//2-order_y:ny//2+order_y+1,:,:,:]
+            R_FFT2D_diff1=R_FFT2D-R_FFT2D
+            R_FFT2D_diff2=R_FFT2D-R_FFT2D
+            
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                permutation=(3,4,0,1,2)
+                temp1=np.transpose(input_array,permutation)
+                R_FFT2D_diff1=np.fft.fftshift(np.fft.fftn(temp1*(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:]),axes=[2,3]),axes=[2,3])
+                R_FFT2D_diff2=np.fft.fftshift(np.fft.fftn(temp1/(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:]),axes=[2,3]),axes=[2,3])
+                permutation=(2,3,4,0,1)
+                R_FFT2D_diff1=np.transpose(R_FFT2D_diff1,permutation)
+                R_FFT2D_diff2=np.transpose(R_FFT2D_diff2,permutation)
+                ROI_diff1=R_FFT2D_diff1[nx//2-order_x:nx//2+order_x+1,ny//2-order_y:ny//2+order_y+1,:,:,:]
+                ROI_diff2=R_FFT2D_diff2[nx//2-order_x:nx//2+order_x+1,ny//2-order_y:ny//2+order_y+1,:,:,:]
+                
+            Phase_Fourier=np.zeros(array_z.shape,dtype=complex)
+            
+            for j in range(len(self.z)):
+                Phase_Fourier[:,:,j]=np.exp(-2*np.pi*complex(0,1)*array_z[:,:,j]*qz_pixel_array)
+            #calculating the phase factors at the Ewald sphere for the irregular Fourier transform
+            
+            FT_Ewald=np.zeros((2*order_x+1,2*order_y+1,2,2),dtype=complex)
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                FT_Ewald1=np.zeros((2*order_x+1,2*order_y+1,2,2),dtype=complex)
+                FT_Ewald2=np.zeros((2*order_x+1,2*order_y+1,2,2),dtype=complex)
+            
+            for j in range(2):
+                for k in range(2):                        
+                    FT_Ewald[:,:,j,k]=np.sum(Phase_Fourier[:,:,0:-1]*ROI[:,:,:,j,k],axis=2)
+                    if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                        FT_Ewald1[:,:,j,k]=np.sum(Phase_Fourier[:,:,0:-1]*ROI_diff1[:,:,:,j,k],axis=2)
+                        FT_Ewald2[:,:,j,k]=np.sum(Phase_Fourier[:,:,0:-1]*ROI_diff2[:,:,:,j,k],axis=2)    
+                         
+            output_full1=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
+            output_full2=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)            
+            
+                       
             
             if sample.sim_type=="Crystal":
                 
                 kernel=np.ones(UC_per_mm_cell,dtype=complex)
                 for j in range(UC_per_mm_cell):
                     kernel[j]=self.att_factor**(j/UC_per_mm_cell)
-                
-                points_z_kernel=np.linspace(0,UC_per_mm_cell-1,UC_per_mm_cell)/UC_per_mm_cell*(2*np.pi/simulation_input['3D_Sample_Parameters']["shape"][2])
-                points_x_kernel=np.zeros(UC_per_mm_cell)
-                points_y_kernel=np.zeros(UC_per_mm_cell)
-                
-                plan.setpts(points_x_kernel, points_y_kernel, points_z_kernel, s, t, u)
-                f_kernel = plan.execute(kernel)
-            plan.setpts(np.ndarray.flatten(xv), np.ndarray.flatten(yv), np.ndarray.flatten(zv), s, t, u)
-            
+                #the kernel is used to convolve the output from the FT over the micromagnetic cell with an object with unit cell periodicity, in order
+                #to generate the equivalent FT from the full object
+                 
+                Phase_kernel=np.zeros((2*order_x+1,2*order_y+1,len(kernel)),dtype=complex)
+                for j in range(len(kernel)):
+                    Phase_kernel[:,:,j]=np.exp(-2*np.pi*complex(0,1)*j*sample.unit_cell/thickness*qz_pixel_array)
+                f_kernel =np.sum(Phase_kernel*kernel,axis=2)
                            
                 #applies periodic boundary conditions, expanding a Fourier output to 3X the area
             if simulation_input['Simulation_Parameters']["differential_absorption"]==False:
-                
+                self.output=np.zeros((det_z.shape[0],det_z.shape[1],2,2),dtype=complex)
                 for j in range(2):
                     for k in range(2):
-                        f = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]))
+                        f = FT_Ewald[:,:,j,k]
                         
                         if sample.sim_type!="Crystal":
                             self.output[:,:,j,k]= np.reshape(f,(self.output.shape[0],self.output.shape[1])) 
                         if sample.sim_type=="Crystal":
                             self.output[:,:,j,k]= np.reshape(f*f_kernel,(self.output.shape[0],self.output.shape[1]))
                         
-                if simulation_input['Simulation_Parameters']['periodic_input']==True:
-                    for j in range(order_x*2+1):
-                        for k in range(order_y*2+1):
-                            if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
-                                output_full1[int(order_pixels_xz[j]),int(order_pixels_y[k]),:,:]=self.output[j,k,:,:]
-                                
-                    self.output=output_full1
+                
+                for j in range(order_x*2+1):
+                    for k in range(order_y*2+1):
+                        if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
+                            output_full1[int(order_pixels_xz[j]),int(order_pixels_y[k]),:,:]=self.output[j,k,:,:]
+# Placing the output into the corresponding detector pixels depending upon the experimental geometry                            
+                self.output=output_full1
                     
                 return self.output,self.output  
             
             if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
-                self.output1=self.output
-                self.output2=self.output
+                self.output1=np.zeros((det_z.shape[0],det_z.shape[1],2,2),dtype=complex)
+                self.output2=np.zeros((det_z.shape[0],det_z.shape[1],2,2),dtype=complex)
                 
                 for j in range(2):
                     for k in range(2):
-                        f1 = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]*(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:])))
-                        f2 = plan.execute(np.ndarray.flatten(x[:,:,:,j,k]/(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:])))
+                        f1 = FT_Ewald1[:,:,j,k]
+                        f2 = FT_Ewald2[:,:,j,k]
                         
                         if sample.sim_type!="Crystal":
-                            self.output1[:,:,j,k]= np.reshape(f1,(n_det_x,n_det_y))
-                            self.output2[:,:,j,k]= np.reshape(f2,(n_det_x,n_det_y))
+                            self.output1[:,:,j,k]= np.reshape(f1,(self.output1.shape[0],self.output1.shape[1]))
+                            self.output2[:,:,j,k]= np.reshape(f2,(self.output1.shape[0],self.output1.shape[1]))
                         if sample.sim_type=="Crystal":
-                            self.output1[:,:,j,k]= np.reshape(f1*f_kernel,(self.output.shape[0],self.output.shape[1]))
-                            self.output2[:,:,j,k]= np.reshape(f2*f_kernel,(self.output.shape[0],self.output.shape[1]))
-                if simulation_input['Simulation_Parameters']['periodic_input']==True:
-                    for j in range(order_x*2+1):
-                        for k in range(order_y*2+1):
-                            if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
-                                output_full1[order_pixels_xz[j],order_pixels_y[k],:,:]=self.output1[j,k,:,:]
-                                output_full2[order_pixels_xz[j],order_pixels_y[k],:,:]=self.output2[j,k,:,:]
-                    self.output1=output_full1   
-                    self.output2=output_full2
+                            self.output1[:,:,j,k]= np.reshape(f1*f_kernel,(self.output1.shape[0],self.output1.shape[1]))
+                            self.output2[:,:,j,k]= np.reshape(f2*f_kernel,(self.output2.shape[0],self.output2.shape[1]))
+                
+                for j in range(order_x*2+1):
+                    for k in range(order_y*2+1):
+                        if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[k] in range(n_det_y)):
+                            output_full1[int(order_pixels_xz[j]),int(order_pixels_y[k]),:,:]=self.output1[j,k,:,:]
+                            output_full2[int(order_pixels_xz[j]),int(order_pixels_y[k]),:,:]=self.output2[j,k,:,:]
+                self.output1=output_full1   
+                self.output2=output_full2
                     
                 return self.output1,self.output2 
+
+
+

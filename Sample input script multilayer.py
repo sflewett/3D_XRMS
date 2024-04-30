@@ -30,7 +30,9 @@ multilayer=ud.Structure('Complex_Multilayer')
 Pd_thicknesses1=np.linspace(2,2.6,7)
 Pd_thicknesses2=2.6
 Pd_thicknesses3=np.linspace(2.5,2,6)
-
+n_caps=0
+#we must add the number of capping layers outside of the periodic structure, because we need to mark the periodic structure separately in order
+#to correctly assign the magnetization distribution
 
 for layers in range(7):
    
@@ -61,6 +63,7 @@ multilayer.visualize()
 # #The next section is to load up the simulated experimental parameters
 # =============================================================================
 prop_sim={}
+prop_sim["n_caps"]=n_caps
 prop_sim["type"]="Multilayer"# Set "Crystal" or "Multilayer"
 prop_sim["full_column"]="full"# Set "Crystal" or "Multilayer"
 prop_sim['det_size']=[256,256]#detector size in pixels
@@ -136,7 +139,7 @@ simulation_input['Simulation_Parameters']=prop_sim
 simulation_input['Background_Parameters']=bkg_params
 
 sample_multilayer=XRMS_Simulation_Load.Generic_sample(simulation_input)
-R,output1,output2,bkg1,bkg2=XRMS_Simulation_Load.Sample2Reflection_Coefficients(sample_multilayer, simulation_input)
+R,output1,output2,bkg1,bkg2=XRMS_Simulation_Load.Sample2Reflection_Coefficients(sample_multilayer, simulation_input,outputs=["R","output1","output2","bkg1","bkg2"])
 #the output files are the diffracted wavefields for each of the two polarization states
 #identical in the case where the ["differential_absorption"] is set to false,
 #and bkg1 and bkg2 are the background outputs (zero when the background calculation is
@@ -145,6 +148,8 @@ In1=prop_sim["pol_in"][0]
 In2=prop_sim["pol_in"][1]
 specular1=[]
 specular2=[]
+output1=np.array(output1)
+output2=np.array(output2)
 for k in range(output1.shape[0]):
     
     temp1=output1[k,:,:,:,:]
