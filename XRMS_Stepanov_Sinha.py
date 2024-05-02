@@ -21,7 +21,7 @@ class XRMS_Simulate():
         self.theta=theta
         self.f_charge=sample.f_Charge
         self.f_charge_maglayer_scalar=sample.f_Charge_maglayer_scalar
-        self.f_Mag=sample.f_Mag/20
+        self.f_Mag=sample.f_Mag
         ##WE NEED TO LOOK INTO THIS ISSUE OF THE MAGNETIC SCATTERING FACTORS!!##
         self.f_Mag2=sample.f_Mag2
         self.full_column=full_column
@@ -669,7 +669,7 @@ class XRMS_Simulate():
         
         if sample.sim_type=="Crystal":
             multiplier=lamda**2*r0/np.pi
-            f_bulk=sample.f_bulk*sample.extra_absorption
+            f_bulk=sample.f_bulk
             chi_zero=na[0,0,:]*multiplier*f_bulk
             u_bulk=(chi_zero+np.sin(self.theta)**2)**0.5
             att2=np.exp(-complex(0,1)*u_bulk*2*np.pi/self.lamda*self.z)

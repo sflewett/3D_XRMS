@@ -11,13 +11,13 @@ size_x=2
 size_z=20
 z=np.linspace(1,size_z,size_z)
 
-dww=0.3
-dw_orientation=(np.tanh((z-8)/5)+1)*np.pi/2
+dww=0.2
+dw_orientation=(np.tanh((z-5)/6)+1)*np.pi/2
 
 y=np.linspace(0,size_y-1,size_y)
 
 y=y/size_y*6*np.pi
-x_bias=0.5
+x_bias=0.0
 mx=np.zeros((size_x,size_y,size_z))
 my=np.zeros((size_x,size_y,size_z))
 mz=np.zeros((size_x,size_y,size_z))
@@ -37,8 +37,8 @@ mx3=mx3/np.sqrt(mx3**2+my3**2+mz3**2)
 my3=my3/np.sqrt(mx3**2+my3**2+mz3**2)
 mz3=mz3/np.sqrt(mx3**2+my3**2+mz3**2)
 
-np.savetxt("Mz_Analytic_crossover=8.csv", mz3, delimiter=",")
+np.savetxt("Mz_Analytic_crossover=5.csv", mz3, delimiter=",")
 
-np.savetxt("My_Analytic_crossover=8.csv", my3, delimiter=",")
+np.savetxt("My_Analytic_crossover=5.csv", my3, delimiter=",")
 
-np.savetxt("Mx_Analytic_crossover=8.csv", mx3, delimiter=",")
+np.savetxt("Mx_Analytic_crossover=5.csv", mx3, delimiter=",")

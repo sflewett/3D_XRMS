@@ -75,11 +75,15 @@ prop_sim['det_dx']=13.5e-6*4#detector pixel size in metres
 prop_sim["det_sample_distance"]=0.10#detector sample distance in metres
 prop_sim["orders_x"]=0
 prop_sim["orders_y"]=10
-prop_sim["energy"]=778#incident photon energies in eV
+prop_sim["energy"]=780#incident photon energies in eV
+prop_sim["f_manual_input"]=True
+if prop_sim["f_manual_input"]==True:
+    prop_sim["f_charge_manual"]=complex(0,60.)#these manual inputs can be later replaced with an energy dependent function interpolating an externally supplied text file
+    prop_sim["f_mag_manual"]=complex(0,17.)
 prop_sim["angles"]=np.linspace(10,20,101)#incident angles in degrees
 prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex(1,0)],[complex(0,-1)]])]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
-prop_sim["differential_absorption"]=True
+prop_sim["differential_absorption"]=False
 prop_sim["matrix_stack_coordinates"]=[0,32]
 #where a field has been applied paralell to the incoming x-rays, then 
 #this should be set as true. This is also the case with zero field, but a 
@@ -87,7 +91,7 @@ prop_sim["matrix_stack_coordinates"]=[0,32]
 #walls in the sample. This should be omitted for speed when performing exploratory work, except where
 #these differential transmission effects are observed, are expected to be present, and are of importance
 #for the study at hand 
-prop_sim["extra_absorption"]=10
+prop_sim["extra_absorption"]=3.5
 #this is a correction for the Henke tables being used
 
 prop_sim["calculate_background"]=False
@@ -108,9 +112,9 @@ prop_sim["TMOKE_Threshold"]=0.999
 #load up 3D simulation parameters
 prop_3D={}
 
-prop_3D['Mx']="Mx_Analytic_crossover=8.csv"#micromagnetic simulation inputs
-prop_3D['My']="My_Analytic_crossover=8.csv"#don´t forget to put these files in the working directory, or add the path to the filename
-prop_3D['Mz']="Mz_Analytic_crossover=8.csv"
+prop_3D['Mx']="Mx_Analytic_crossover=5.csv"#micromagnetic simulation inputs
+prop_3D['My']="My_Analytic_crossover=5.csv"#don´t forget to put these files in the working directory, or add the path to the filename
+prop_3D['Mz']="Mz_Analytic_crossover=5.csv"
 
 #There is no obligation here to use micromagnetic simulation outputs, however the output should be a 3D array (maybe with one dimension of size 1)
 # and the values can be defined analytically. Prior to saving as a csv file, this should be flattened to 1D using C ordering (for example using the Numpy
@@ -182,7 +186,8 @@ for k in range(output1.shape[0]):
     
     #final step of convolving the background with the predicted intensities for a "clean" sample
     
-    plt.plot((np.abs(Intensity1[128,:]*beam_stop[128,:])))#-(np.abs(Intensity2[128,:]*beam_stop[128,:]))))#/(np.abs(Intensity1[128,:]*beam_stop[128,:])+1e-6+(np.abs(Intensity2[128,:]*beam_stop[128,:]))))
+    plt.plot(((np.abs(Intensity1[128,:]*beam_stop[128,:]))-(np.abs(Intensity2[128,:]*beam_stop[128,:])))/((np.abs(Intensity1[128,:]*beam_stop[128,:]))+1e-6+(np.abs(Intensity2[128,:]*beam_stop[128,:]))))
+    #plt.plot(((np.abs(Intensity1[128,:]*beam_stop[128,:]))))
     plt.show()
     specular1.append(Intensity1[int(prop_sim['det_size'][0]/2),int(prop_sim['det_size'][1]/2)])
     specular2.append(Intensity2[int(prop_sim['det_size'][0]/2),int(prop_sim['det_size'][1]/2)])

@@ -97,6 +97,10 @@ prop_sim["orders_x"]=50
 prop_sim["orders_y"]=50
 prop_sim["energy"]=780#incident photon energies in eV
 prop_sim["angles"]=np.linspace(10,20,11)#incident angles in degrees
+prop_sim["f_manual_input"]=True
+if prop_sim["f_manual_input"]==True:
+    prop_sim["f_charge_manual"]=complex(0,60.)#these manual inputs can be later replaced with an energy dependent function interpolating an externally supplied text file
+    prop_sim["f_mag_manual"]=complex(0,17.)
 prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex(1,0)],[complex(0,-1)]])]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
 prop_sim["differential_absorption"]=False
@@ -131,6 +135,10 @@ prop_3D['Mz']="Mz_Matlab.csv"
 #There is no obligation here to use micromagnetic simulation outputs, however the output should be a 3D array (maybe with one dimension of size 1)
 # and the values can be defined analytically. Prior to saving as a csv file, this should be flattened to 1D using C ordering (for example using the Numpy
 #"flatten" command)
+
+prop_3D["dz_average"]=6.0
+prop_3D["dz_mag"]=1.5
+#average layer thicknesses for the calculation of the differential absorption using a scalar model (activated when "differential absorption" is set to "True")
 
 prop_3D["shape"]=[256,256,41]#array size of the micromagnetic input. PLEASE MAKE SURE YOUR MICROMAGNETIC SIMULTION IS OF THE SAME DIMENSIONS AS YOUR MULTILAYER
 #the number of magnetic layers must be the same as the z dimension

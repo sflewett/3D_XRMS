@@ -114,13 +114,16 @@ prop_sim['det_size']=[256,256]#detector size in pixels
 prop_sim['det_dx']=13.5e-6*4#detector pixel size in metres
 prop_sim["det_sample_distance"]=0.15#detector sample distance in metres
 prop_sim["energy"]=640#incident photon energies in eV
-prop_sim["angles"]=np.linspace(10,20,2)#incident angles in degrees
+prop_sim["angles"]=np.linspace(10,20,51)#incident angles in degrees
 prop_sim["pol_in"]=[[[complex(1.0,0.0)],[complex(0.0,1.0)]],[[complex(1.0,0.0)],[complex(0.0,-1.0)]]]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
 prop_sim["type"]="Crystal"# Set "Crystal" or "Multilayer"
 if prop_sim["type"]=="Crystal":
     prop_sim["f_bulk"]=amorph_LSMO._atom.get_atomic_form_factor(prop_sim["energy"])
-    prop_sim["extra_absorption"]=2
+prop_sim["f_manual_input"]=True    
+if prop_sim["f_manual_input"]==True:
+    prop_sim["f_charge_manual"]=complex(0,60.)#these manual inputs can be later replaced with an energy dependent function interpolating an externally supplied text file
+    prop_sim["f_mag_manual"]=complex(0,17.)    
 #choose here whether the sample is of a crystal or multilayer step. From a software point of view, for a crystal, there is an interpolation between the calculation
 #of the reflection coefficients and the calculation of the resulting diffraction pattern. For the "Multilayer" setting, the micromagnetic simulation must have the same
 #number of layers as the structure defined in this present script. Where this option is chosen, we may make the approximation that the magnetization can be expressed in blocks of many unit cells

@@ -41,10 +41,11 @@ class Generic_sample():
         self.size_x=micromag_size[0]
         self.size_y=micromag_size[1]
         layer_list=["vacuum"]
-        if "extra_absorption" in params_general:
-            self.extra_absorption=params_general["extra_absorption"]
-        else:
-            self.extra_absorption=1.
+        
+        if "f_manual_input" in params_general and params_general["f_manual_input"]==True:
+            self.f_charge_manual=params_general["f_charge_manual"]
+            self.f_mag_manual=params_general["f_mag_manual"]
+            
         if sim_type=="Crystal":
             n_repeats=[]
             unit_cells=[]
@@ -170,9 +171,18 @@ class Generic_sample():
                         temp=S.sub_structures[index-1][0].atoms[kk][0].get_atomic_form_factor(self.energy)
                         if np.imag(temp)<0:
                             temp=np.conj(temp)
-                        f_Charge[:,:,l]=temp
-                        f_Mag[:,:,l]+=S.sub_structures[index-1][0].atoms[kk][0].get_magnetic_form_factor(self.energy)/len(indices)
-                        f_Mag2[:,:,l]=complex(0,0)
+                        
+                        temp2=S.sub_structures[index-1][0].atoms[kk][0].get_magnetic_form_factor(self.energy)/len(indices)
+                        
+                        if "f_manual_input" not in params_general or params_general["f_manual_input"]==False or temp2==0:
+                            f_Charge[:,:,l]=temp
+                            f_Mag[:,:,l]+=S.sub_structures[index-1][0].atoms[kk][0].get_magnetic_form_factor(self.energy)/len(indices)
+                            f_Mag2[:,:,l]=complex(0,0)
+                        
+                        if temp2!=0 and "f_manual_input" in params_general and params_general["f_manual_input"]==True:
+                            f_Charge[:,:,l]=params_general["f_charge_manual"]
+                            f_Mag[:,:,l]+=params_general["f_mag_manual"]/len(indices)
+                            
                     if f_Mag[:,:,l].sum()!=0:
                         maglayer_count+=1
                         M2[:,:,:,l]=M_temp[:,:,:,l2]
@@ -230,9 +240,15 @@ class Generic_sample():
                     if np.imag(temp)<0:
                         temp=np.conj(temp)
                     f_Charge[:,:,l]=temp
-                    f_Mag[:,:,l]=S.sub_structures[l-1][0]._atom.get_magnetic_form_factor(self.energy)
+                    
+                    temp2=S.sub_structures[l-1][0]._atom.get_magnetic_form_factor(self.energy)
+                    
+                    if temp2!=0 and "f_manual_input" in params_general and params_general["f_manual_input"]==True:
+                        f_Mag[:,:,l]=params_general["f_mag_manual"]
+                        f_Charge[:,:,l]=params_general["f_charge_manual"]
+                    if "f_manual_input" not in params_general:
+                        f_Mag[:,:,l]=temp2
                     if f_Mag[:,:,l].sum()!=0:
-                        f_Charge[:,:,l]=f_Charge[:,:,l]+complex(0,1)*np.imag(temp)*self.extra_absorption
                         f_Charge_maglayer_scalar=f_Charge[0,0,l]
                     f_Mag2[:,:,l]=complex(0,0)
                     na[:,:,l]=S.sub_structures[l-1][0]._density/S.sub_structures[l-1][0].atom.mass.magnitude
