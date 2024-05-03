@@ -22,9 +22,9 @@ u = ud.u  # import the pint unit registry from udkm1Dsim
 import scipy.constants as constants
 import numpy as np
 import matplotlib.pyplot as plt
-from Core_Simulation_Classes import XRMS_Stepanov_Sinha
-from Core_Simulation_Classes import XRMS_Simulation_Load
-from Core_Simulation_Classes import background_Lee
+import XRMS_Stepanov_Sinha
+import XRMS_Simulation_Load
+import background_Lee
 
 #matplotlib inline
 u.setup_matplotlib()  # use matplotlib with pint units
