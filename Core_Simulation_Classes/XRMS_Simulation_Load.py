@@ -269,7 +269,10 @@ class Generic_sample():
                     
             self.dz_mag=params_3D["dz_mag"]*1e-9   
             self.dz=params_3D["dz_average"]*1e-9      
-            self.M=(M2)
+            M3=M2.copy()
+            M3[0,:,:,:]=M2[0,:,:,:]*np.cos(self.phi_rotate*np.pi/180)+M2[1,:,:,:]*np.sin(self.phi_rotate*np.pi/180)
+            M3[1,:,:,:]=-M2[0,:,:,:]*np.sin(self.phi_rotate*np.pi/180)+M2[1,:,:,:]*np.cos(self.phi_rotate*np.pi/180)
+            self.M=(M3)
             self.na=na
             self.f_Charge=f_Charge
             self.f_Mag=f_Mag
