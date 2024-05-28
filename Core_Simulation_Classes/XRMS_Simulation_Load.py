@@ -27,6 +27,10 @@ class Generic_sample():
             self.TMOKE_Threshold=params_general["TMOKE_Threshold"]
         else:
             self.TMOKE_Threshold=0.995
+        if "phi_rotate" in params_general:
+            self.phi_rotate=params_general["phi_rotate"]
+        else:
+            self.phi_rotate=0.0
         if "full_column" in params_general:
             self.full_column=params_general["full_column"]
         else:
@@ -181,23 +185,29 @@ class Generic_sample():
                             f_Mag2[:,:,l]=complex(0,0)
                         
                         if temp2!=0 and "f_manual_input" in params_general and params_general["f_manual_input"]==True:
-                            f_Charge[:,:,l]=params_general["f_charge_manual"]
+                            f_Charge[:,:,l]=params_general["f_charge_manual"]#/len(indices)
                             f_Mag[:,:,l]+=params_general["f_mag_manual"]/len(indices)
                             
                     if f_Mag[:,:,l].sum()!=0:
                         maglayer_count+=1
                         M2[:,:,:,l]=M_temp[:,:,:,l2]
                         f_Charge_maglayer_scalar=f_Charge[0,0,l]
+                        f_Mag_scalar=f_Mag[0,0,l]
+                        na_scalar=na[0,0,l]
             self.dz_mag=maglayer_count/(self.size_z*n_unique)*self.dz*1e-9        
-            self.n_unique=n_unique        
-            self.M=(M2)
+            self.n_unique=n_unique
+            M3=M2.copy()
+            M3[0,:,:,:]=M2[0,:,:,:]*np.cos(self.phi_rotate*np.pi/180)+M2[1,:,:,:]*np.sin(self.phi_rotate*np.pi/180)
+            M3[1,:,:,:]=-M2[0,:,:,:]*np.sin(self.phi_rotate*np.pi/180)+M2[1,:,:,:]*np.cos(self.phi_rotate*np.pi/180)
+            self.M=(M3)
             self.na=(na)
             self.f_Charge=f_Charge
             self.f_Mag=f_Mag
             self.f_Mag2=f_Mag2
             self.z=np.array(z,dtype=np.double)*1e-9         
             self.f_Charge_maglayer_scalar=f_Charge_maglayer_scalar
-            
+            self.f_Mag_scalar=f_Mag_scalar  
+            self.na_scalar=na_scalar
         if sim_type=="Multilayer":
             
             micromag_files=[params_3D["Mx"],params_3D["My"],params_3D["Mz"]]#order is longitudinal, transverse, polar
@@ -252,6 +262,8 @@ class Generic_sample():
                         f_Mag[:,:,l]=temp2
                     if f_Mag[:,:,l].sum()!=0:
                         f_Charge_maglayer_scalar=f_Charge[0,0,l]
+                        f_Mag_scalar=f_Mag[0,0,l]
+                        na_scalar=S.sub_structures[l-1][0]._density/S.sub_structures[l-1][0].atom.mass.magnitude
                     f_Mag2[:,:,l]=complex(0,0)
                     na[:,:,l]=S.sub_structures[l-1][0]._density/S.sub_structures[l-1][0].atom.mass.magnitude
                     
@@ -263,8 +275,8 @@ class Generic_sample():
             self.f_Mag=f_Mag
             self.f_Mag2=f_Mag2
             self.f_Charge_maglayer_scalar=f_Charge_maglayer_scalar
-              
-
+            self.f_Mag_scalar=f_Mag_scalar  
+            self.na_scalar=na_scalar
 def Sample2Reflection_Coefficients(sample, simulation_input,outputs=["R","output1","output2","bkg1","bkg2"]):
 #This method runs as a Main program to calculate the XRMS signal for a given set of simulation parameters and 
 #sample, all bundled together in a single object defined in a simulation definition script, with the "sample" attribute
@@ -280,18 +292,31 @@ def Sample2Reflection_Coefficients(sample, simulation_input,outputs=["R","output
         energy_simulation=simulation_input['Simulation_Parameters']["energy"]
         size=simulation_input['3D_Sample_Parameters']["shape"]
         XRMS=XRMS_Simulate(sample,theta,energy=energy_simulation,full_column=sample.full_column)
+        #initializing simulation class
+        
         XRMS.Chi_define()
         XRMS.get_A_S_matrix()
         XRMS.XM_define()
         XRMS.Matrix_stack(stack_coordinates=sample.stack_coordinates)
         if sample.full_column=="full":
             XRMS.get_R()
-            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
-                XRMS.get_Faraday_Parallel()
-        if "R" in outputs:
-            R.append(XRMS.R_array)
-        
-        temp1,temp2=XRMS.Ewald_sphere_pixel_index(XRMS.R_array,sample, simulation_input)
+            if simulation_input['Simulation_Parameters']["rotated_stripes"]==True:    
+                if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                
+                    XRMS.get_Faraday_rotated_stripe()
+                temp1,temp2=XRMS.Ewald_sphere_rotated_stripe(XRMS.R_array[0,::],sample, simulation_input)
+                    
+            else:
+                if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                    XRMS.get_Faraday_Parallel()
+                
+                if "R" in outputs:
+                    R.append(XRMS.R_array)
+                    
+                    #INSERT R expansion and rotation here
+                    # this method must also update basic simulation parameters from the original to the expanded ones
+                    
+                temp1,temp2=XRMS.Ewald_sphere_pixel_index(XRMS.R_array,sample, simulation_input)
         if "output1" in outputs:
             output1.append(temp1)
         if "output2" in outputs:
