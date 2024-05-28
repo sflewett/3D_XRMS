@@ -79,14 +79,16 @@ prop_sim["det_sample_distance"]=0.10#detector sample distance in metres
 prop_sim["orders_x"]=0
 prop_sim["orders_y"]=10
 prop_sim["energy"]=780#incident photon energies in eV
-prop_sim["f_manual_input"]=False
+prop_sim["f_manual_input"]=True
 if prop_sim["f_manual_input"]==True:
     prop_sim["f_charge_manual"]=complex(0,60.)#these manual inputs can be later replaced with an energy dependent function interpolating an externally supplied text file
     prop_sim["f_mag_manual"]=complex(0,17.)
 prop_sim["angles"]=np.linspace(10,20,101)#incident angles in degrees
 prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex(1,0)],[complex(0,-1)]])]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
-prop_sim["differential_absorption"]=False
+prop_sim["differential_absorption"]=True
+prop_sim["rotated_stripes"]=True
+prop_sim["phi_rotate"]=0#phi rotation in degrees
 prop_sim["matrix_stack_coordinates"]=[0,32]
 #where a field has been applied paralell to the incoming x-rays, then 
 #this should be set as true. This is also the case with zero field, but a 
@@ -168,18 +170,18 @@ output1=np.array(output1)
 output2=np.array(output2)
 for k in range(output1.shape[0]):
     
-    temp1=output1[k,:,:,:,:]
-    temp2=output2[k,:,:,:,:]
-    Intensity1=(In1[0]*temp1[:,:,0,0]+In1[1]*temp1[:,:,0,1])*np.conj(In1[0]*temp1[:,:,0,0]+In1[1]*temp1[:,:,0,1])+\
-    (In1[0]*temp1[:,:,1,0]+In1[1]*temp1[:,:,1,1])*np.conj(In1[0]*temp1[:,:,1,0]+In1[1]*temp1[:,:,1,1])
+    temp1=output1[k,:,:,:]
+    temp2=output2[k,:,:,:]
+    Intensity1=(In1[0]*temp1[:,0,0]+In1[1]*temp1[:,0,1])*np.conj(In1[0]*temp1[:,0,0]+In1[1]*temp1[:,0,1])+\
+    (In1[0]*temp1[:,1,0]+In1[1]*temp1[:,1,1])*np.conj(In1[0]*temp1[:,1,0]+In1[1]*temp1[:,1,1])
     
-    Intensity2=(In2[0]*temp2[:,:,0,0]+In2[1]*temp2[:,:,0,1])*np.conj(In2[0]*temp2[:,:,0,0]+In2[1]*temp2[:,:,0,1])+\
-    (In2[0]*temp2[:,:,1,0]+In2[1]*temp2[:,:,1,1])*np.conj(In2[0]*temp2[:,:,1,0]+In2[1]*temp2[:,:,1,1])
+    Intensity2=(In2[0]*temp2[:,0,0]+In2[1]*temp2[:,0,1])*np.conj(In2[0]*temp2[:,0,0]+In2[1]*temp2[:,0,1])+\
+    (In2[0]*temp2[:,1,0]+In2[1]*temp2[:,1,1])*np.conj(In2[0]*temp2[:,1,0]+In2[1]*temp2[:,1,1])
     
     #calculating the outgoing intensities combining the results for the polarizations
     
     beam_stop=np.ones(Intensity1.shape)
-    beam_stop[128,128]=0
+    beam_stop[prop_sim["orders_y"]]=0
     
     #background1=bkg1[k].diffuse_background[1:-1,1:-1]
     #background2=bkg2[k].diffuse_background[1:-1,1:-1]
@@ -189,11 +191,11 @@ for k in range(output1.shape[0]):
     
     #final step of convolving the background with the predicted intensities for a "clean" sample
     
-    plt.plot(((np.abs(Intensity1[128,:]*beam_stop[128,:]))-(np.abs(Intensity2[128,:]*beam_stop[128,:])))/((np.abs(Intensity1[128,:]*beam_stop[128,:]))+1e-6+(np.abs(Intensity2[128,:]*beam_stop[128,:]))))
+    plt.plot(((np.abs(Intensity1*beam_stop))-(np.abs(Intensity2*beam_stop))))#/((np.abs(Intensity1[128,:]*beam_stop[128,:]))+1e-6+(np.abs(Intensity2[128,:]*beam_stop[128,:]))))
     #plt.plot(((np.abs(Intensity1[128,:]*beam_stop[128,:]))))
     plt.show()
-    specular1.append(Intensity1[int(prop_sim['det_size'][0]/2),int(prop_sim['det_size'][1]/2)])
-    specular2.append(Intensity2[int(prop_sim['det_size'][0]/2),int(prop_sim['det_size'][1]/2)])
+    specular1.append(Intensity1[prop_sim["orders_y"]])
+    specular2.append(Intensity2[prop_sim["orders_y"]])
     
 plt.plot(np.log10(np.array(np.abs(specular1))))
 plt.show()

@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Created on Mon May 27 08:49:59 2024
+
+@author: sflewett
+"""
+
+# -*- coding: utf-8 -*-
+"""
 Created on Tue Apr 23 09:09:18 2024
 
 @author: sflewett
@@ -17,7 +24,7 @@ dw_orientation=(np.tanh((z-5)/6)+1)*np.pi/2
 y=np.linspace(0,size_y-1,size_y)
 
 y=y/size_y*6*np.pi
-x_bias=0.0
+x_bias=0
 mx=np.zeros((size_x,size_y,size_z))
 my=np.zeros((size_x,size_y,size_z))
 mz=np.zeros((size_x,size_y,size_z))

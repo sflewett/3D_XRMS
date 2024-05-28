@@ -21,6 +21,8 @@ class XRMS_Simulate():
         self.theta=theta
         self.f_charge=sample.f_Charge
         self.f_charge_maglayer_scalar=sample.f_Charge_maglayer_scalar
+        self.f_Mag_scalar=sample.f_Mag_scalar
+        self.na_scalar=sample.na_scalar
         self.f_Mag=sample.f_Mag
         ##WE NEED TO LOOK INTO THIS ISSUE OF THE MAGNETIC SCATTERING FACTORS!!##
         self.f_Mag2=sample.f_Mag2
@@ -689,6 +691,132 @@ class XRMS_Simulate():
             R_array[:,:,l,:,:]=self.Mrt_matrix[:,:,l,:,:]*att[l]
         self.R_array=R_array
         
+    def get_Faraday_rotated_stripe(self):
+        #This method takes a set of reflection coefficients along a line, and calculates
+        #the corresponding diffraction pattern taking into account differential absorption and Ewald 
+        #sphere curvature
+        
+        #please note that the magnetization values must also be rotated due to the vectorial nature of the physical process being 
+        #modelled. 
+        M_long_in, M_long_out, M_pi_in,M_pi_out,M_trans=self.get_M_Beamdirection()
+        R_shape=self.R_array.shape[0:2]
+        R_short=np.argmin(R_shape)
+        self.phi_rotate=self.sample.phi_rotate*np.pi/180
+        if R_short==0:
+            R_stripe=self.R_array[0,:,:,:,:]
+            M_long_in=M_long_in[0,:,:]
+            M_long_out=M_long_out[0,:,:]
+            M_pi_in=M_pi_in[0,:,:]
+            M_pi_out=M_pi_out[0,:,:]
+            M_trans=M_trans[0,:,:]
+        if R_short==1:
+            R_stripe=self.R_array[:,0,:,:,:]
+            M_long_in=M_long_in[:,0,:]
+            M_long_out=M_long_out[:,0,:]
+            M_pi_in=M_pi_in[:,0,:]
+            M_pi_out=M_pi_out[:,0,:]
+            M_trans=M_trans[:,0,:]
+        
+        theta=self.theta
+        phi=self.phi_rotate
+        
+        def get_abs_adj(XMCD_XMLD,M,in_out):
+            #to calculate the adjusted absorption
+            #the interpolation is assumed to be along the x direction
+            #which in the zero rotation case is assumed to be constant in the x
+            #direction
+            ny=self.size_y
+            nz=len(self.sample.z)
+            
+            dx=self.sample.dx
+            dz=self.sample.dz
+            
+            dz_mag=self.sample.dz_mag
+            if self.sample.sim_type=="Crystal":
+                ratio=dx/(dz/self.sample.n_unique)
+            else:
+                ratio=dx/dz
+            y=np.linspace(0,ny-1,ny)
+            z=np.linspace(0,nz-1,nz)
+            #we are talking here about the pixel in z
+            interp_plus=np.zeros((len(y),len(z)),dtype=complex)
+            interp_minus=np.zeros((len(y),len(z)),dtype=complex)
+            for k in range(len(z)):
+                trans_plus=(y+z[k]/ratio/np.tan(theta)*np.sin(phi))%(ny-1)
+                trans_minus=(y-z[k]/ratio/np.tan(theta)*np.sin(phi))%(ny-1)
+                #we can caluculate the projected magnetization through the sample by shifting each plane in the multilayer sample along the longitudinal
+                #direction
+                pts_plus=[]
+                pts_minus=[]
+                for i in range (len(y)):
+                    point_plus=trans_plus[i]
+                    point_minus=trans_minus[i]
+                    pts_plus.append(point_plus)
+                    pts_minus.append(point_minus)
+                pts_plus=np.array(pts_plus)
+                pts_minus=np.array(pts_minus)
+                average_mx=np.sum(M[:,k])/(M.shape[0])
+                average_mx2=np.sum(M[:,k]**2)/(M.shape[0])
+                if XMCD_XMLD=="XMCD":
+                    a=np.interp(pts_plus,y, M[:,k], left=None, right=None, period=ny)
+                    b=np.interp(pts_minus,y, M[:,k], left=None, right=None, period=ny)
+                if XMCD_XMLD=="XMLD":
+                    a=np.interp(pts_plus,y, M[:,k]**2, left=None, right=None, period=ny)
+                    b=np.interp(pts_minus,y, M[:,k]**2, left=None, right=None, period=ny)
+                a=np.interp(pts_plus,y, M[:,k], left=None, right=None, period=ny)
+                b=np.interp(pts_minus,y, M[:,k], left=None, right=None, period=ny)
+                interp_plus[:,k]=a
+                interp_minus[:,k]=b
+                
+            partial_sum_plus=interp_plus-interp_plus
+            partial_sum_minus=interp_plus-interp_plus
+            
+            
+            for j in range(interp_plus.shape[1]):
+                if j==0:
+                    partial_sum_plus[:,j]=interp_plus[:,j]
+                    partial_sum_minus[:,j]=interp_minus[:,j]
+                else:
+                    partial_sum_plus[:,j]=partial_sum_plus[:,j-1]+interp_plus[:,j]
+                    partial_sum_minus[:,j]=partial_sum_minus[:,j-1]+interp_minus[:,j]
+                #the plus and minus are for the incoming and outgoing beams respectively. We need partial sums as well
+                #to include the total contributions up to each layer where reflection is to be calculated
+            for k in range(len(z)):
+                    
+                a=np.interp(pts_plus,y, partial_sum_minus[:,k], left=None, right=None, period=ny)
+                b=np.interp(pts_minus,y, partial_sum_plus[:,k], left=None, right=None, period=ny)
+                partial_sum_plus[:,k]=b
+                partial_sum_minus[:,k]=a
+            #here we unwrap the partial sums so that they correspond to the correct spatial position of the reflections
+            
+            u,umag,umag2=self.get_U_mag_absorption()   
+            x=np.exp(-np.imag(u)*2*np.pi/self.lamda*dz_mag)
+            dx=np.exp(-np.imag(umag)*2*np.pi/self.lamda*dz_mag)-x
+            dx2=np.exp(-np.imag(umag2)*2*np.pi/self.lamda*dz_mag)-x
+            x=x
+            dx=dx
+            dx2=dx2
+            #calculating relative differential absorptions to first order
+            
+            if XMCD_XMLD=="XMCD":
+                adj_abs_plus=partial_sum_plus/x*dx+1
+                adj_abs_minus=partial_sum_minus/x*dx+1 
+            if XMCD_XMLD=="XMLD":
+                adj_abs_plus=partial_sum_plus/x*dx2+1
+                adj_abs_minus=partial_sum_minus/x*dx2+1 
+            if in_out=="in":
+                return adj_abs_plus
+            if in_out=="out":
+                return adj_abs_minus
+        self.adj_abs_plus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_in,in_out="in")
+        self.adj_abs_minus_XMCD=get_abs_adj(XMCD_XMLD="XMCD",M=M_long_out,in_out="out")
+        self.adj_abs_plus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_in,in_out="in")
+        self.adj_abs_minus_XMLD_pi=get_abs_adj(XMCD_XMLD="XMLD",M=M_pi_out,in_out="out")
+        self.adj_abs_plus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="in")
+        self.adj_abs_minus_XMLD_trans=get_abs_adj(XMCD_XMLD="XMLD",M=M_trans,in_out="out")
+        
+        
+        
     def get_M_Beamdirection(self):
         #go from M defined in x, y and z to an M defined as longitudinal (along)
         #the beam, sigma and pi
@@ -709,17 +837,17 @@ class XRMS_Simulate():
         #of Stepanov Sinha
         lamda=self.lamda
         f_charge=self.f_charge_maglayer_scalar
-        f_Mag=np.max(self.f_Mag)
+        f_Mag=self.f_Mag_scalar
         f_Mag2=np.max(self.f_Mag2)
         r0=self.r0
-        na=self.na
+        na=self.na_scalar
                
         multiplier=lamda**2*r0/np.pi
         chi_zero=na*multiplier*f_charge
         u=(chi_zero+np.sin(self.theta)**2)**0.5
-        chi_zero=na*multiplier*(f_charge-f_Mag)
+        chi_zero=na*multiplier*(f_charge+f_Mag)
         umag=(chi_zero+np.sin(self.theta)**2)**0.5
-        chi_zero=na*multiplier*(f_charge-f_Mag2)  
+        chi_zero=na*multiplier*(f_charge+f_Mag2)  
         umag2=(chi_zero+np.sin(self.theta)**2)**0.5 
         
         return u,umag,umag2
@@ -756,8 +884,8 @@ class XRMS_Simulate():
             interp_plus=np.zeros((len(x),len(y),len(z)),dtype=complex)
             interp_minus=np.zeros((len(x),len(y),len(z)),dtype=complex)
             for k in range(len(z)):
-                x_shifted_plus=(x+z[k]*ratio/np.tan(theta))%(nx-1)
-                x_shifted_minus=(x-z[k]*ratio/np.tan(theta))%(nx-1)
+                x_shifted_plus=(x+z[k]/ratio/np.tan(theta))%(nx-1)
+                x_shifted_minus=(x-z[k]/ratio/np.tan(theta))%(nx-1)
                 #we can caluculate the projected magnetization through the sample by shifting each plane in the multilayer sample along the longitudinal
                 #direction
                 pts_plus=[]
@@ -935,6 +1063,7 @@ class XRMS_Simulate():
                 temp1=np.transpose(input_array,permutation)
                 R_FFT2D_diff1=np.fft.fftshift(np.fft.fftn(temp1*(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:]),axes=[2,3]),axes=[2,3])
                 R_FFT2D_diff2=np.fft.fftshift(np.fft.fftn(temp1/(self.adj_abs_plus_XMCD[:,:,1:]*self.adj_abs_minus_XMCD[:,:,1:]),axes=[2,3]),axes=[2,3])
+                #strong absorption, weak reflection 
                 permutation=(2,3,4,0,1)
                 R_FFT2D_diff1=np.transpose(R_FFT2D_diff1,permutation)
                 R_FFT2D_diff2=np.transpose(R_FFT2D_diff2,permutation)
@@ -1025,5 +1154,180 @@ class XRMS_Simulate():
                     
                 return self.output1,self.output2 
 
-
+    def Ewald_sphere_rotated_stripe(self,input_stripe,sample, simulation_input):
+        #From the array of reflection coefficients, get the Ewald sphere slice
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==False:
+                self.phi_rotate=self.sample.phi_rotate*np.pi/180
+            if "total_thickness" not in simulation_input['3D_Sample_Parameters'].keys():          
+                thickness=sample.z[-1]
+            else:
+                thickness=simulation_input['3D_Sample_Parameters']["total_thickness"]
+            dim_y=sample.dy*input_stripe.shape[0]*1e-9
+            dim_x=dim_y
+            ny=input_stripe.shape[0]
+            
+            
+            lamda=self.lamda
+            pixel_thetay=np.arcsin(lamda/dim_y)
+            pixel_thetaz=np.arcsin(lamda/(2*thickness))#the factor of two is for the reflection
+            #theta values corresponding to the natural fft output
+            
+            #pixel numbers of the input array
+            if sample.sim_type=="Crystal":
+                UC_per_mm_cell=np.int64(sample.dz*1e-9/sample.unit_cell)
+                temp=(simulation_input['3D_Sample_Parameters']["shape"][2]-1)/(simulation_input['3D_Sample_Parameters']["shape"][2])*(1/(2*UC_per_mm_cell*(simulation_input['3D_Sample_Parameters']["shape"][2]))+1)    
+                points_z_fft=self.z[1:]/(self.z[-1]-self.z[1])*2*np.pi*temp-np.pi
+            if sample.sim_type=="Multilayer":
+                points_z_fft=self.z[1:]/(self.z[-1]-self.z[1])*2*np.pi-np.pi
+            points_y_fft=np.linspace(-np.pi,np.pi-2*np.pi/ny,ny)
+            
+            yv, zv = np.meshgrid(points_y_fft, points_z_fft, indexing='ij')
+            #scaling the z positions for the non uniform fft. The effective array size in z is set as the 
+            #thickness of the sample
+            delta_qz=2*np.pi/thickness
+            
+            #q spacing of a pixel in the FT output
+            qz_origin=2*np.pi/lamda*np.sin(self.theta)
+            #centre of the Ewald sphere in terms of qz        
+            qz_scatter_pixel=2*qz_origin/delta_qz
+            #pixel value in z of the centre of the scattered light            
+            det_pixel=simulation_input['Simulation_Parameters']['det_dx']
+            detector_distance=simulation_input['Simulation_Parameters']["det_sample_distance"]
+            n_det_x=simulation_input['Simulation_Parameters']['det_size'][0]
+            n_det_y=simulation_input['Simulation_Parameters']['det_size'][1]
+            order_y=simulation_input['Simulation_Parameters']['orders_y']
+            
+            detector_pixel_angle=np.arctan(det_pixel/detector_distance)
+            #the physical angle represented by each detector pixel
+            detpixels_per_fourier_pixel_y=pixel_thetay/detector_pixel_angle
+            #the number of detector pixels per diffraction order. This does not yet include the 
+            #factor of 1/cos(theta)
+            
+            if n_det_y%2==0:
+                detector_y=np.linspace(-n_det_y/2,n_det_y/2-1,n_det_y)*det_pixel
+            else:
+                detector_y=np.linspace(-(n_det_y-1)/2,(n_det_y-1)/2,n_det_y)*det_pixel
+            if n_det_x%2==0:
+                detector_xz=np.linspace(-n_det_x/2,n_det_x/2-1,n_det_x)*det_pixel
+            else:
+                detector_xz=np.linspace(-(n_det_x-1)/2,(n_det_x-1)/2,n_det_x)*det_pixel
+            
+            detector_angle_y=np.arctan(detector_y/detector_distance)#angle of each detector pixel
+            detector_angle_xz=np.arctan(detector_xz/detector_distance)
+            #detector angles for each detector pixel            
+            
+            detector_pixel_y=detector_angle_y/pixel_thetay
+                     
+            detector_pixel_z=detector_angle_xz/pixel_thetaz*np.cos(self.theta)+qz_scatter_pixel
+            
+            ones_y=np.ones(n_det_y)
+            ones_xz=np.ones(n_det_x)
+            det_z=np.transpose(np.outer(ones_y,detector_pixel_z))
+            
+            detector_pixel_y=np.linspace(-order_y,order_y,2*order_y+1)
+                        
+            delta_qx_physical=4*np.pi/dim_x
+            qz_physical=2*np.pi/lamda*np.sin(np.arccos((2*np.pi/lamda*np.cos(self.theta)+np.sin(self.phi_rotate)*detector_pixel_y*delta_qx_physical)/(2*np.pi/lamda)))+qz_origin
+            qz_pixel=qz_physical/delta_qz
+            qz_pixel[np.isnan(qz_physical)==True]=qz_pixel[np.int64(0.5*(len(qz_pixel)-1))]
+            qx_physical=(qz_physical-qz_origin*2)*np.tan(self.theta)
+            
+            detector_pixel_y[np.isnan(qz_physical)==True]=0
+            
+            det_z=qz_pixel
+            
+            qy_pixel=detector_pixel_y
+            order_pixels_y=np.round((qy_pixel-qy_pixel[len(qy_pixel)//2])*detpixels_per_fourier_pixel_y*np.cos(self.phi_rotate)+(n_det_y)/2)
+            order_pixels_xz=np.round(-qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_y+n_det_x/2)
+            
+            array_y,array_z=np.meshgrid(detector_pixel_y,self.z/thickness,indexing='ij')
+            qz_pixel_array=np.zeros((2*order_y+1))
+            
+            qz_pixel_array=qz_pixel
+                
+            R_FFT2D=np.fft.fftshift(np.fft.fftn(input_stripe,axes=[0]),axes=[0])
+            ROI=R_FFT2D[ny//2-order_y:ny//2+order_y+1,:,:,:]
+            R_FFT2D_diff1=R_FFT2D-R_FFT2D
+            R_FFT2D_diff2=R_FFT2D-R_FFT2D
+            
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                permutation=(2,3,0,1)
+                temp1=np.transpose(input_stripe,permutation)
+                R_FFT2D_diff1=np.fft.fftshift(np.fft.fftn(temp1*(self.adj_abs_plus_XMCD[:,1:]*self.adj_abs_minus_XMCD[:,1:]),axes=[2]),axes=[2])
+                R_FFT2D_diff2=np.fft.fftshift(np.fft.fftn(temp1/(self.adj_abs_plus_XMCD[:,1:]*self.adj_abs_minus_XMCD[:,1:]),axes=[2]),axes=[2])
+                permutation=(2,3,0,1)
+                R_FFT2D_diff1=np.transpose(R_FFT2D_diff1,permutation)
+                R_FFT2D_diff2=np.transpose(R_FFT2D_diff2,permutation)
+                ROI_diff1=R_FFT2D_diff1[ny//2-order_y:ny//2+order_y+1,:,:,:]
+                ROI_diff2=R_FFT2D_diff2[ny//2-order_y:ny//2+order_y+1,:,:,:]
+                
+            Phase_Fourier=np.zeros(array_z.shape,dtype=complex)
+            
+            for j in range(len(self.z)):
+                Phase_Fourier[:,j]=np.exp(-2*np.pi*complex(0,1)*array_z[:,j]*qz_pixel_array)
+            #calculating the phase factors at the Ewald sphere for the irregular Fourier transform
+            
+            FT_Ewald=np.zeros((2*order_y+1,2,2),dtype=complex)
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                FT_Ewald1=np.zeros((2*order_y+1,2,2),dtype=complex)
+                FT_Ewald2=np.zeros((2*order_y+1,2,2),dtype=complex)
+            
+            for j in range(2):
+                for k in range(2):                        
+                    FT_Ewald[:,j,k]=np.sum(Phase_Fourier[:,0:-1]*ROI[:,:,j,k],axis=1)
+                    if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                        FT_Ewald1[:,j,k]=np.sum(Phase_Fourier[:,0:-1]*ROI_diff1[:,:,j,k],axis=1)
+                        FT_Ewald2[:,j,k]=np.sum(Phase_Fourier[:,0:-1]*ROI_diff2[:,:,j,k],axis=1)    
+                         
+                      
+            
+            if sample.sim_type=="Crystal":
+                
+                kernel=np.ones(UC_per_mm_cell,dtype=complex)
+                for j in range(UC_per_mm_cell):
+                    kernel[j]=self.att_factor**(j/UC_per_mm_cell)
+                #the kernel is used to convolve the output from the FT over the micromagnetic cell with an object with unit cell periodicity, in order
+                #to generate the equivalent FT from the full object
+                 
+                Phase_kernel=np.zeros((2*order_y+1,len(kernel)),dtype=complex)
+                for j in range(len(kernel)):
+                    Phase_kernel[:,j]=np.exp(-2*np.pi*complex(0,1)*j*sample.unit_cell/thickness*qz_pixel_array)
+                f_kernel =np.sum(Phase_kernel*kernel,axis=1)
+                           
+                #applies periodic boundary conditions, expanding a Fourier output to 3X the area
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==False:
+                self.output=np.zeros((det_z.shape[0],2,2),dtype=complex)
+                for j in range(2):
+                    for k in range(2):
+                        f = FT_Ewald[:,j,k]
+                        
+                        if sample.sim_type!="Crystal":
+                            self.output[:,j,k]= np.reshape(f,(self.output.shape[0])) 
+                        if sample.sim_type=="Crystal":
+                            self.output[:,j,k]= np.reshape(f*f_kernel,(self.output.shape[0]))
+                        
+                
+                
+                return self.output,self.output  
+            
+            if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                self.output1=np.zeros((det_z.shape[0],2,2),dtype=complex)
+                self.output2=np.zeros((det_z.shape[0],2,2),dtype=complex)
+                
+                for j in range(2):
+                    for k in range(2):
+                        f1 = FT_Ewald1[:,j,k]
+                        f2 = FT_Ewald2[:,j,k]
+                        
+                        if sample.sim_type!="Crystal":
+                            self.output1[:,j,k]= np.reshape(f1,(self.output1.shape[0]))
+                            self.output2[:,j,k]= np.reshape(f2,(self.output1.shape[0]))
+                        if sample.sim_type=="Crystal":
+                            self.output1[:,j,k]= np.reshape(f1*f_kernel,(self.output1.shape[0]))
+                            self.output2[:,j,k]= np.reshape(f2*f_kernel,(self.output2.shape[0]))
+                
+               
+                
+                    
+                return self.output1,self.output2
 
