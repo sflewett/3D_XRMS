@@ -6,6 +6,7 @@ Created on Fri Feb  2 13:41:01 2024
 """
 import sys
 sys.path.append('../')
+
 import numpy as np
 from XRMS_Stepanov_Sinha import XRMS_Simulate
 import csv
@@ -280,7 +281,7 @@ class Generic_sample():
             self.f_Charge_maglayer_scalar=f_Charge_maglayer_scalar
             self.f_Mag_scalar=f_Mag_scalar  
             self.na_scalar=na_scalar
-def Sample2Reflection_Coefficients(sample, simulation_input,outputs=["R","output1","output2","bkg1","bkg2"]):
+def Sample2Reflection_Coefficients(simulation_input,outputs=["R","output1","output2","bkg1","bkg2"]):
 #This method runs as a Main program to calculate the XRMS signal for a given set of simulation parameters and 
 #sample, all bundled together in a single object defined in a simulation definition script, with the "sample" attribute
 #an instance of the "Generic_Sample" class
@@ -289,56 +290,61 @@ def Sample2Reflection_Coefficients(sample, simulation_input,outputs=["R","output
     output2=[]
     bkg1=[]
     bkg2=[]
-    for count2,theta_deg in enumerate(simulation_input['Simulation_Parameters']["angles"]):
-        print(theta_deg)
-        theta=theta_deg*np.pi/180
-        energy_simulation=simulation_input['Simulation_Parameters']["energy"]
-        size=simulation_input['3D_Sample_Parameters']["shape"]
-        XRMS=XRMS_Simulate(sample,theta,energy=energy_simulation,full_column=sample.full_column)
-        #initializing simulation class
-        
-        XRMS.Chi_define()
-        XRMS.get_A_S_matrix()
-        XRMS.XM_define()
-        XRMS.Matrix_stack(stack_coordinates=sample.stack_coordinates)
-        if sample.full_column=="full":
-            XRMS.get_R()
-            if simulation_input['Simulation_Parameters']["rotated_stripes"]==True:    
-                if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
-                
-                    XRMS.get_Faraday_rotated_stripe()
-                temp1,temp2=XRMS.Ewald_sphere_rotated_stripe(XRMS.R_array[0,::],sample, simulation_input)
-                    
-            else:
-                if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
-                    XRMS.get_Faraday_Parallel()
-                
-                if "R" in outputs:
-                    R.append(XRMS.R_array)
-                    
-                    #INSERT R expansion and rotation here
-                    # this method must also update basic simulation parameters from the original to the expanded ones
-                    
-                temp1,temp2=XRMS.Ewald_sphere_pixel_index(XRMS.R_array,sample, simulation_input)
-        if "output1" in outputs:
-            output1.append(temp1)
-        if "output2" in outputs:
-            output2.append(temp2)
-        if simulation_input['Simulation_Parameters']["calculate_background"]==True:
-            bk1,bk2=background_Lee.background_main(simulation_input,theta=theta_deg*np.pi/180)
-            if "bkg1" in outputs:
-                bkg1.append(bk1)
-            if "bkg2" in outputs:
-                bkg2.append(bk2)
-        else:
-            det_size=simulation_input['Simulation_Parameters']["det_size"]
-            bk1=np.zeros((det_size[0],det_size[1]))
-            bk2=np.zeros((det_size[0],det_size[1]))
-            if "bkg1" in outputs:
-                bkg1.append(bk1)
-            if "bkg2" in outputs:
-                bkg2.append(bk2)
+    if simulation_input['Simulation_Parameters'].get("phi_rotations")==None:
+        simulation_input['Simulation_Parameters']["phi_rotations"]=[0]
+    for count3,phi_deg in enumerate(simulation_input['Simulation_Parameters']["phi_rotations"]):
+        simulation_input['Simulation_Parameters']["phi_rotate"]=phi_deg
+        sample=Generic_sample(simulation_input)
+        for count2,theta_deg in enumerate(simulation_input['Simulation_Parameters']["angles"]):
+            print(theta_deg)
+            theta=theta_deg*np.pi/180
+            energy_simulation=simulation_input['Simulation_Parameters']["energy"]
+            size=simulation_input['3D_Sample_Parameters']["shape"]
+            XRMS=XRMS_Simulate(sample,theta,energy=energy_simulation,full_column=sample.full_column)
+            #initializing simulation class
             
+            XRMS.Chi_define()
+            XRMS.get_A_S_matrix()
+            XRMS.XM_define()
+            XRMS.Matrix_stack(stack_coordinates=sample.stack_coordinates)
+            if sample.full_column=="full":
+                XRMS.get_R()
+                if simulation_input['Simulation_Parameters']["rotated_stripes"]==True:    
+                    if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                    
+                        XRMS.get_Faraday_rotated_stripe()
+                    temp1,temp2=XRMS.Ewald_sphere_rotated_stripe(XRMS.R_array[0,::],sample, simulation_input)
+                        
+                else:
+                    if simulation_input['Simulation_Parameters']["differential_absorption"]==True:
+                        XRMS.get_Faraday_Parallel()
+                    
+                    if "R" in outputs:
+                        R.append(XRMS.R_array)
+                        
+                        #INSERT R expansion and rotation here
+                        # this method must also update basic simulation parameters from the original to the expanded ones
+                        
+                    temp1,temp2=XRMS.Ewald_sphere_pixel_index(XRMS.R_array,sample, simulation_input)
+            if "output1" in outputs:
+                output1.append(temp1)
+            if "output2" in outputs:
+                output2.append(temp2)
+            if simulation_input['Simulation_Parameters']["calculate_background"]==True:
+                bk1,bk2=background_Lee.background_main(simulation_input,theta=theta_deg*np.pi/180)
+                if "bkg1" in outputs:
+                    bkg1.append(bk1)
+                if "bkg2" in outputs:
+                    bkg2.append(bk2)
+            else:
+                det_size=simulation_input['Simulation_Parameters']["det_size"]
+                bk1=np.zeros((det_size[0],det_size[1]))
+                bk2=np.zeros((det_size[0],det_size[1]))
+                if "bkg1" in outputs:
+                    bkg1.append(bk1)
+                if "bkg2" in outputs:
+                    bkg2.append(bk2)
+                
     return R,output1,output2,bkg1,bkg2
 
 

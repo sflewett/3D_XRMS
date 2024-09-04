@@ -148,7 +148,7 @@ simulation_input['Simulation_Parameters']=prop_sim
 simulation_input['Background_Parameters']=bkg_params
 
 sample_multilayer=XRMS_Simulation_Load.Generic_sample(simulation_input)
-R,output1,output2,bkg1,bkg2=XRMS_Simulation_Load.Sample2Reflection_Coefficients(sample_multilayer, simulation_input,outputs=["R","output1","output2","bkg1","bkg2"])
+R,output1,output2,bkg1,bkg2=XRMS_Simulation_Load.Sample2Reflection_Coefficients(simulation_input,outputs=["R","output1","output2","bkg1","bkg2"])
 #the output files are the diffracted wavefields for each of the two polarization states
 #identical in the case where the ["differential_absorption"] is set to false,
 #and bkg1 and bkg2 are the background outputs (zero when the background calculation is
