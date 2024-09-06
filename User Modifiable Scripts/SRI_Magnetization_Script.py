@@ -54,7 +54,7 @@ mx3=np.ndarray.flatten(mx)
 my3=np.ndarray.flatten(my)
 
 mz3=np.ndarray.flatten(mz)
-
+print(mx3[0:10])
 mx3=mx3/np.sqrt(mx3**2+my3**2+mz3**2)
 my3=my3/np.sqrt(mx3**2+my3**2+mz3**2)
 mz3=mz3/np.sqrt(mx3**2+my3**2+mz3**2)

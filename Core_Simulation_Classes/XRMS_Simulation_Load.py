@@ -217,6 +217,7 @@ class Generic_sample():
                 with open(micromag_files[j]) as f:
                     reader = csv.reader(f)
                     data = list(reader)
+                    print(data[0:10])
                     data=np.array(data)
                     data_reshaped=data.reshape(micromag_size,order="C")
                     M_temp[j,:,:,:]=data_reshaped

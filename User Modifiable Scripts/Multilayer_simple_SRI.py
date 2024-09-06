@@ -88,6 +88,7 @@ prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex
 #in this example setting we calculate for both left and right circular light
 prop_sim["differential_absorption"]=True
 prop_sim["rotated_stripes"]=True
+#phi is the azimuthal angle with the 0 degrees parallel to the incident beam
 prop_sim["phi_rotations"]=[90]#phi rotation in degrees
 prop_sim["matrix_stack_coordinates"]=[0,32]
 #where a field has been applied paralell to the incoming x-rays, then 
@@ -96,8 +97,7 @@ prop_sim["matrix_stack_coordinates"]=[0,32]
 #walls in the sample. This should be omitted for speed when performing exploratory work, except where
 #these differential transmission effects are observed, are expected to be present, and are of importance
 #for the study at hand 
-prop_sim["extra_absorption"]=3.5
-#this is a correction for the Henke tables being used
+
 
 prop_sim["calculate_background"]=False
 #when set to True, this calculates the diffuse background scatter, and is especially important when working with
