@@ -42,10 +42,10 @@ class Background_DWBA_Lee():
         self.factor=np.sum(self.factor)/np.product(self.factor.shape)
         f_average=np.sum(self.f_charge)/np.product(self.f_charge.shape)
         self.n_average=1-self.factor*f_average
-        self.sigmas = np.array([4.6e-10,4.6e-10])   
-        self.eta_par = np.array([2.0e-8,2.0e-8]);
-        self.h = np.array([0.3,0.3])        
-        self.eta_perp=4.5e-8
+        self.sigmas = simulation_input['Background_Parameters']["sigmas"]  
+        self.eta_par = simulation_input['Background_Parameters']["eta_par"]
+        self.h = simulation_input['Background_Parameters']["h"]       
+        self.eta_perp=simulation_input['Background_Parameters']["eta_perp"]
         #These are parameters from the Lee 2003 paper
         self.specular_0=XRMS_Simulate(self.sample,self.theta_0,self.energy,full_column="column")
         #no point running the XRMS code in full 3D mode here, because we convolve with the magnetic scattering pattern afterwards.

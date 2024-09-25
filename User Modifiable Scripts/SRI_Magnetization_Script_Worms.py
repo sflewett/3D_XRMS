@@ -10,7 +10,7 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 delta_x=5e-9
 Pi=3.141592654; 
-n=512
+n=256
 dww=3.0
 period_parameter=5
 nz=20

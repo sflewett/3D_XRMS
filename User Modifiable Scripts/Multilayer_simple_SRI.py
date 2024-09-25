@@ -58,9 +58,9 @@ for layers in range(20):
     multilayer.add_sub_structure(amorph_Pt,1)
 
 #in this example, we use an irregularly spaced multilayer, of the same kind as the example in the associated publication    
-print(multilayer)
+#print(multilayer)
 
-multilayer.visualize()
+#multilayer.visualize()
 # =============================================================================
 # #Up to this point, we have defined the chemical layer structure. The following definitions
 # #are for the 3D magnetic structure from micromagnetic simulations
@@ -75,7 +75,7 @@ prop_sim["type"]="Multilayer"# Set "Crystal" or "Multilayer"
 prop_sim["full_column"]="full"# Set "Crystal" or "Multilayer"
 prop_sim['det_size']=[256,256]#detector size in pixels
 prop_sim['det_dx']=13.5e-6*4#detector pixel size in metres
-prop_sim["det_sample_distance"]=0.10#detector sample distance in metres
+prop_sim["det_sample_distance"]=0.26#detector sample distance in metres
 prop_sim["orders_x"]=0
 prop_sim["orders_y"]=10
 prop_sim["energy"]=780#incident photon energies in eV
@@ -83,13 +83,13 @@ prop_sim["f_manual_input"]=True
 if prop_sim["f_manual_input"]==True:
     prop_sim["f_charge_manual"]=complex(0,60.)#these manual inputs can be later replaced with an energy dependent function interpolating an externally supplied text file
     prop_sim["f_mag_manual"]=complex(0,17.)
-prop_sim["angles"]=np.linspace(10,20,101)#incident angles in degrees
+prop_sim["angles"]=np.linspace(14,18,41)#incident angles in degrees
 prop_sim["pol_in"]=[np.array([[complex(1,0)],[complex(0,1)]]),np.array([[complex(1,0)],[complex(0,-1)]])]#polarization of the incoming light
 #in this example setting we calculate for both left and right circular light
 prop_sim["differential_absorption"]=True
 prop_sim["rotated_stripes"]=True
 #phi is the azimuthal angle with the 0 degrees parallel to the incident beam
-prop_sim["phi_rotations"]=[90]#phi rotation in degrees
+prop_sim["phi_rotations"]=[3]#phi rotation in degrees
 prop_sim["matrix_stack_coordinates"]=[0,32]
 #where a field has been applied paralell to the incoming x-rays, then 
 #this should be set as true. This is also the case with zero field, but a 
@@ -117,9 +117,9 @@ prop_sim["TMOKE_Threshold"]=0.999
 #load up 3D simulation parameters
 prop_3D={}
 
-prop_3D['Mx']="../Magnetization Files/SRI_x.csv"#micromagnetic simulation inputs
-prop_3D['My']="../Magnetization Files/SRI_y.csv"#don´t forget to put these files in the working directory, or add the path to the filename
-prop_3D['Mz']="../Magnetization Files/SRI_z.csv"
+prop_3D['Mx']="../Magnetization_Files/SRI_x.csv"#micromagnetic simulation inputs
+prop_3D['My']="../Magnetization_Files/SRI_y.csv"#don´t forget to put these files in the working directory, or add the path to the filename
+prop_3D['Mz']="../Magnetization_Files/SRI_z.csv"
 
 #There is no obligation here to use micromagnetic simulation outputs, however the output should be a 3D array (maybe with one dimension of size 1)
 # and the values can be defined analytically. Prior to saving as a csv file, this should be flattened to 1D using C ordering (for example using the Numpy
@@ -127,7 +127,7 @@ prop_3D['Mz']="../Magnetization Files/SRI_z.csv"
 
 prop_3D["shape"]=[2,384,20]#array size of the micromagnetic input. PLEASE MAKE SURE YOUR MICROMAGNETIC SIMULTION IS OF THE SAME DIMENSIONS AS YOUR MULTILAYER
 #the number of magnetic layers must be the same as the z dimension
-prop_3D["x_y_pixel_sizes"]=[2.,2.]#pixel sizes in nm. for crystals this need not be equal to the unit cell parameters, however
+prop_3D["x_y_pixel_sizes"]=[1.25,1.25]#pixel sizes in nm. for crystals this need not be equal to the unit cell parameters, however
 #for multilayers the z pixel sizes need to match the real multilayer structure, or be a scaler representing the periodicity
 prop_3D["dz_average"]=2.8
 prop_3D["dz_mag"]=0.8
@@ -197,7 +197,7 @@ for k in range(output1.shape[0]):
     
     Intensities_sum[k,:]=((np.abs(Intensity1*beam_stop))+(np.abs(Intensity2*beam_stop)))
     
-    Intensities_diff[k,:]=((np.abs(Intensity1*beam_stop))-(np.abs(Intensity2*beam_stop)))/((np.abs(Intensity1*beam_stop))+(np.abs(Intensity2*beam_stop))+1e-6)
+    Intensities_diff[k,:]=((np.abs(Intensity1*beam_stop))-(np.abs(Intensity2*beam_stop)))/((np.abs(Intensity1*beam_stop))+(np.abs(Intensity2*beam_stop))+1e-3)
     Intensities_diff[0,0]=1.0
     Intensities_diff[-1,-1]=-1.0
     
@@ -208,7 +208,7 @@ for k in range(output1.shape[0]):
 
 for i in range(output1.shape[0]):
     fig, (ax1, ax2) = plt.subplots(1,2)
-    filename="../figures/test"+str(i)
+    filename="../figures/test"+str(i+120)
     im = ax1.plot(Intensities_sum[i,:], animated=True)
     #plt.savefig(filename+"sum.png")
     im = ax2.plot(Intensities_diff[i,:], animated=True)

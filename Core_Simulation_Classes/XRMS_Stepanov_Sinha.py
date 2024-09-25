@@ -1155,6 +1155,10 @@ class XRMS_Simulate():
                 return self.output1,self.output2 
 
     def Ewald_sphere_rotated_stripe(self,input_stripe,sample, simulation_input):
+            if "output_2D" in simulation_input['Simulation_Parameters'].keys():    
+                output_2D=simulation_input['Simulation_Parameters']["output_2D"]
+            else:
+                output_2D=False
         #From the array of reflection coefficients, get the Ewald sphere slice
             if simulation_input['Simulation_Parameters']["differential_absorption"]==False:
                 self.phi_rotate=self.sample.phi_rotate*np.pi/180
@@ -1196,6 +1200,7 @@ class XRMS_Simulate():
             n_det_x=simulation_input['Simulation_Parameters']['det_size'][0]
             n_det_y=simulation_input['Simulation_Parameters']['det_size'][1]
             order_y=simulation_input['Simulation_Parameters']['orders_y']
+            order_x=order_y
             
             detector_pixel_angle=np.arctan(det_pixel/detector_distance)
             #the physical angle represented by each detector pixel
@@ -1219,7 +1224,7 @@ class XRMS_Simulate():
             detector_pixel_y=detector_angle_y/pixel_thetay
                      
             detector_pixel_z=detector_angle_xz/pixel_thetaz*np.cos(self.theta)+qz_scatter_pixel
-            
+           
             ones_y=np.ones(n_det_y)
             ones_xz=np.ones(n_det_x)
             det_z=np.transpose(np.outer(ones_y,detector_pixel_z))
@@ -1232,14 +1237,15 @@ class XRMS_Simulate():
             qz_pixel[np.isnan(qz_physical)==True]=qz_pixel[np.int64(0.5*(len(qz_pixel)-1))]
             qx_physical=(qz_physical-qz_origin*2)*np.tan(self.theta)
             
+            
             detector_pixel_y[np.isnan(qz_physical)==True]=0
             
             det_z=qz_pixel
             
             qy_pixel=detector_pixel_y
             order_pixels_y=np.round((qy_pixel-qy_pixel[len(qy_pixel)//2])*detpixels_per_fourier_pixel_y*np.cos(self.phi_rotate)+(n_det_y)/2)
-            order_pixels_xz=np.round(-qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_y+n_det_x/2)
-            
+            order_pixels_xz=np.round(qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_y+n_det_x/2)
+            #print(qx_physical/delta_qx_physical/np.sin(self.theta)*detpixels_per_fourier_pixel_y+n_det_x/2)
             array_y,array_z=np.meshgrid(detector_pixel_y,self.z/thickness,indexing='ij')
             qz_pixel_array=np.zeros((2*order_y+1))
             
@@ -1279,8 +1285,9 @@ class XRMS_Simulate():
                         FT_Ewald1[:,j,k]=np.sum(Phase_Fourier[:,0:-1]*ROI_diff1[:,:,j,k],axis=1)
                         FT_Ewald2[:,j,k]=np.sum(Phase_Fourier[:,0:-1]*ROI_diff2[:,:,j,k],axis=1)    
                          
-                      
-            
+            output_full=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)          
+            output_full1=np.zeros((n_det_x,n_det_y,2,2),dtype=complex)
+            output_full2=np.zeros((n_det_x,n_det_y,2,2),dtype=complex) 
             if sample.sim_type=="Crystal":
                 
                 kernel=np.ones(UC_per_mm_cell,dtype=complex)
@@ -1305,7 +1312,14 @@ class XRMS_Simulate():
                             self.output[:,j,k]= np.reshape(f,(self.output.shape[0])) 
                         if sample.sim_type=="Crystal":
                             self.output[:,j,k]= np.reshape(f*f_kernel,(self.output.shape[0]))
+                if output_2D==True:            
+                    for j in range(order_x*2+1):
                         
+                        if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[j] in range(n_det_y)):
+                            output_full[int(order_pixels_xz[j]),int(order_pixels_y[j]),:,:]=self.output[j,:,:]
+                                
+                    self.output=output_full
+                
                 
                 
                 return self.output,self.output  
@@ -1325,9 +1339,16 @@ class XRMS_Simulate():
                         if sample.sim_type=="Crystal":
                             self.output1[:,j,k]= np.reshape(f1*f_kernel,(self.output1.shape[0]))
                             self.output2[:,j,k]= np.reshape(f2*f_kernel,(self.output2.shape[0]))
-                
-               
-                
+                if output_2D==True:
+                    for j in range(order_x*2+1):
+                        
+                        if (order_pixels_xz[j] in range(n_det_x)) and (order_pixels_y[j] in range(n_det_y)):
+                            output_full1[int(order_pixels_xz[j]),int(order_pixels_y[j]),:,:]=self.output1[j,:,:]
+                            output_full2[int(order_pixels_xz[j]),int(order_pixels_y[j]),:,:]=self.output2[j,:,:]
+                            
+                    self.output1=output_full1   
+                    self.output2=output_full2
+                    
                     
                 return self.output1,self.output2
 
